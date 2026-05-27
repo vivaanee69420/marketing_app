@@ -341,21 +341,6 @@ create table app_settings (
   unique (org_id, key)
 );
 
--- Org-level provider app/project credentials (BYO per tenant): e.g. each org's
--- own Google API project (client id/secret, developer token, login customer id).
--- Secrets in `config` are stored as *_enc (AES-256-GCM); non-secret ids plain.
--- Account-level creds (customer_id, refresh token) stay per-business on
--- `integrations`. config shape (google): { client_id, client_secret_enc,
--- developer_token_enc, login_customer_id }.
-create table org_integration_settings (
-  org_id     uuid not null references organizations(id) on delete cascade,
-  provider   text not null,                      -- meta | google
-  config     jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  primary key (org_id, provider)
-);
-
 create table audit_logs (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references organizations(id) on delete cascade,
@@ -380,8 +365,7 @@ begin
     'conversion_types','conversions','conversion_matches','sync_runs',
     'ai_reports','scheduled_jobs','notification_recipients','dashboard_issues',
     'tasks','reviews','organic_metrics','booking_records','benchmark_metrics',
-    'membership_tiers','app_settings','audit_logs','memberships',
-    'org_integration_settings'
+    'membership_tiers','app_settings','audit_logs','memberships'
   ]
   loop
     execute format('alter table %I enable row level security;', t);
