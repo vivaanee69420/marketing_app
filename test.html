@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GM Dashboard - Live HTML Preview</title>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <!-- React & ReactDOM (v18) -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <!-- Prop-Types (required for Recharts) -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.js"></script>
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <!-- Core Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Babel Standalone (in-browser compilation) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-[#faf9f6] font-sans antialiased text-[#4c4c4c]">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useMemo, useState } = React;
+      const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie } = Recharts;
+
+      // --- MOCK LUCIDE INTEGRATION ---
+      const Icon = ({ name, className = '', ...props }) => {
+        const ref = React.useRef(null);
+        React.useEffect(() => {
+          if (ref.current && window.lucide) {
+            ref.current.innerHTML = '';
+            
+            // Normalize icon name matching (camelCase, kebab-case, PascalCase)
+            const camelCase = name.charAt(0).toLowerCase() + name.slice(1);
+            const kebabCase = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            const iconNode = window.lucide.icons[name] || window.lucide.icons[camelCase] || window.lucide.icons[kebabCase];
+            
+            if (iconNode) {
+              const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+              svg.setAttribute('width', '24');
+              svg.setAttribute('height', '24');
+              svg.setAttribute('viewBox', '0 0 24 24');
+              svg.setAttribute('fill', 'none');
+              svg.setAttribute('stroke', 'currentColor');
+              svg.setAttribute('stroke-width', '2');
+              svg.setAttribute('stroke-linecap', 'round');
+              svg.setAttribute('stroke-linejoin', 'round');
+              
+              if (className) {
+                className.split(' ').forEach(c => {
+                  if (c) svg.classList.add(c);
+                });
+              }
+              
+              iconNode.forEach(([childName, childAttrs]) => {
+                const child = document.createElementNS('http://www.w3.org/2000/svg', childName);
+                Object.keys(childAttrs).forEach(key => {
+                  child.setAttribute(key, childAttrs[key]);
+                });
+                svg.appendChild(child);
+              });
+              
+              ref.current.appendChild(svg);
+            }
+          }
+        }, [name, className]);
+
+        return <span ref={ref} className="inline-block" {...props} />;
+      };
+
+      const Bot = (props) => <Icon name="Bot" {...props} />;
+      const Building2 = (props) => <Icon name="Building2" {...props} />;
+      const Crown = (props) => <Icon name="Crown" {...props} />;
+      const Download = (props) => <Icon name="Download" {...props} />;
+      const Filter = (props) => <Icon name="Filter" {...props} />;
+      const Globe = (props) => <Icon name="Globe" {...props} />;
+      const LayoutDashboard = (props) => <Icon name="LayoutDashboard" {...props} />;
+      const Megaphone = (props) => <Icon name="Megaphone" {...props} />;
+      const ShieldCheck = (props) => <Icon name="ShieldCheck" {...props} />;
+      const PoundSterling = (props) => <Icon name="PoundSterling" {...props} />;
+      const Target = (props) => <Icon name="Target" {...props} />;
+      const Trophy = (props) => <Icon name="Trophy" {...props} />;
+      const Users = (props) => <Icon name="Users" {...props} />;
+
+
+      // --- MOCK SHADCN/UI COMPONENTS ---
+      const Card = ({ className = '', ...props }) => (
+        <div className={`rounded-2xl border border-[#eadfca] bg-white shadow-sm ${className}`} {...props} />
+      );
+
+      const CardContent = ({ className = '', ...props }) => (
+        <div className={`p-5 ${className}`} {...props} />
+      );
+
+      const Button = ({ className = '', variant = 'default', ...props }) => {
+        const base = "inline-flex items-center justify-center rounded-2xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none h-10 px-4 py-2";
+        const variants = {
+          default: "bg-[#d19a15] text-white hover:bg-[#b98510]",
+          outline: "border border-[#eadfca] text-[#4c4c4c] bg-white hover:bg-[#f7efdf]"
+        };
+        return <button className={`${base} ${variants[variant] || variants.default} ${className}`} {...props} />;
+      };
+
+      const Badge = ({ className = '', variant = 'default', ...props }) => {
+        const variants = {
+          default: "bg-[#f7efdf] text-[#8a650f]",
+          outline: "border border-[#d19a15]/40 text-[#8a650f]"
+        };
+        return (
+          <span className={`inline-flex items-center rounded-xl px-2.5 py-0.5 text-xs font-semibold ${variants[variant] || variants.default} ${className}`} {...props} />
+        );
+      };
+
+      // --- MOCK SELECT COMPONENT ---
+      const Select = ({ value, onValueChange, children }) => {
+        const trigger = React.Children.toArray(children).find(c => c.type === SelectTrigger);
+        const content = React.Children.toArray(children).find(c => c.type === SelectContent);
+        
+        // Extract layout classes (like width) from trigger to apply to wrapper
+        const triggerClassName = trigger ? trigger.props.className : '';
+        const widthClass = triggerClassName.split(' ').find(c => c.startsWith('w-')) || '';
+        const otherClasses = triggerClassName.split(' ').filter(c => !c.startsWith('w-')).join(' ');
+        
+        return (
+          <div className={`relative inline-block ${widthClass}`}>
+            <select
+              value={value}
+              onChange={(e) => onValueChange(e.target.value)}
+              className={`w-full appearance-none rounded-2xl border border-[#eadfca] bg-white px-4 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-[#d19a15]/30 h-10 cursor-pointer ${otherClasses}`}
+            >
+              {content ? content.props.children : null}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-[#4c4c4c]">
+              <svg className="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
+        );
+      };
+      const SelectTrigger = ({ children }) => children;
+      const SelectValue = () => null;
+      const SelectContent = ({ children }) => children;
+      const SelectItem = ({ value, children }) => <option value={value}>{children}</option>;
+
+
+      // --- MOCK TABS COMPONENTS ---
+      const TabsContext = React.createContext({ activeTab: '', setActiveTab: () => {} });
+      
+      const Tabs = ({ defaultValue, className = '', children }) => {
+        const [activeTab, setActiveTab] = useState(defaultValue);
+        return (
+          <TabsContext.Provider value={{ activeTab, setActiveTab }}>
+            <div className={className}>{children}</div>
+          </TabsContext.Provider>
+        );
+      };
+
+      const TabsList = ({ className = '', children }) => (
+        <div className={`inline-flex h-10 items-center justify-center rounded-2xl bg-[#f7efdf] p-1 text-muted-foreground ${className}`}>{children}</div>
+      );
+
+      const TabsTrigger = ({ value, className = '', children }) => {
+        const { activeTab, setActiveTab } = React.useContext(TabsContext);
+        const isActive = activeTab === value;
+        return (
+          <button
+            onClick={() => setActiveTab(value)}
+            className={`inline-flex items-center justify-center whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${
+              isActive ? 'bg-white text-[#4c4c4c] shadow-sm' : 'text-[#758299] hover:text-[#4c4c4c]'
+            } ${className}`}
+          >
+            {children}
+          </button>
+        );
+      };
+
+      const TabsContent = ({ value, className = '', children }) => {
+        const { activeTab } = React.useContext(TabsContext);
+        if (activeTab !== value) return null;
+        return <div className={`mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${className}`}>{children}</div>;
+      };
+
+
+      // --- ORIGINAL SOURCE CODE FROM test.jsx ---
+      const businesses = [
+        'All Businesses',
+        'GM Dental Barnet',
+        'GM Dental Ashford',
+        'GM Dental Rochester',
+        'Fixed Teeth Solutions',
+        'Warwick Lodge Dental & Implant Centre',
+        'Plan 4 Growth Academy',
+      ];
+
+      const businessData = [
+        { name: 'GM Barnet', google: 1260, meta: 840, leads: 92, website: 34, chatbot: 18, cpl: 22.83, status: 'Strong' },
+        { name: 'GM Ashford', google: 1480, meta: 1130, leads: 138, website: 46, chatbot: 29, cpl: 18.91, status: 'Best CPL' },
+        { name: 'GM Rochester', google: 980, meta: 720, leads: 76, website: 28, chatbot: 14, cpl: 22.37, status: 'Stable' },
+        { name: 'Fixed Teeth', google: 1720, meta: 960, leads: 101, website: 39, chatbot: 21, cpl: 26.53, status: 'Watch' },
+        { name: 'Warwick Lodge', google: 820, meta: 610, leads: 54, website: 21, chatbot: 9, cpl: 26.48, status: 'Improve' },
+        { name: 'Plan 4 Growth', google: 540, meta: 1280, leads: 67, website: 18, chatbot: 16, cpl: 27.16, status: 'Scaling' },
+      ];
+
+      const trendData = [
+        { month: 'Jan', spend: 5200, leads: 242, cpl: 21.49 },
+        { month: 'Feb', spend: 6100, leads: 278, cpl: 21.94 },
+        { month: 'Mar', spend: 6800, leads: 326, cpl: 20.86 },
+        { month: 'Apr', spend: 7200, leads: 356, cpl: 20.22 },
+        { month: 'May', spend: 8340, leads: 421, cpl: 19.81 },
+      ];
+
+      const sourceData = [
+        { name: 'Google Ads', value: 278, fill: '#d19a15' },
+        { name: 'Meta Ads', value: 189, fill: '#4c4c4c' },
+        { name: 'Website Forms', value: 74, fill: '#b7a77a' },
+        { name: 'Chatbot', value: 41, fill: '#e8d7ae' },
+      ];
+
+      const campaignData = [
+        { business: 'GM Dental Ashford', platform: 'Google Ads', campaign: 'Dental Implants Search', spend: 860, clicks: 412, leads: 48, cpl: 17.92, conversions: 19 },
+        { business: 'GM Dental Barnet', platform: 'Meta Ads', campaign: 'Invisalign Lead Form', spend: 520, clicks: 891, leads: 31, cpl: 16.77, conversions: 11 },
+        { business: 'Fixed Teeth Solutions', platform: 'Google Ads', campaign: 'Emergency Dentist Search', spend: 740, clicks: 336, leads: 24, cpl: 30.83, conversions: 8 },
+        { business: 'Warwick Lodge', platform: 'Meta Ads', campaign: 'Implant Open Day', spend: 390, clicks: 524, leads: 17, cpl: 22.94, conversions: 6 },
+        { business: 'Plan 4 Growth Academy', platform: 'Meta Ads', campaign: 'Level 7 Implantology', spend: 780, clicks: 1040, leads: 39, cpl: 20.00, conversions: 14 },
+      ];
+
+      function currency(value) {
+        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(value);
+      }
+
+      function decimalCurrency(value) {
+        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 2 }).format(value);
+      }
+
+      const StatCard = ({ title, value, subtitle, icon: Icon }) => (
+        <Card className="rounded-2xl shadow-sm border-[#eadfca] bg-white hover:shadow-md transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-[#6f6f6f]">{title}</p>
+                <h3 className="mt-2 text-2xl font-semibold tracking-tight text-[#4c4c4c]">{value}</h3>
+                <p className="mt-1 text-xs text-[#8a8a8a]">{subtitle}</p>
+              </div>
+              <div className="rounded-2xl bg-[#f7efdf] p-3 text-[#d19a15]">
+                <Icon className="h-5 w-5" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+
+      function MarketingDashboardUI() {
+        const [selectedBusiness, setSelectedBusiness] = useState('All Businesses');
+        const [period, setPeriod] = useState('This Month');
+
+        const totals = useMemo(() => {
+          const spend = businessData.reduce((sum, item) => sum + item.google + item.meta, 0);
+          const leads = businessData.reduce((sum, item) => sum + item.leads, 0);
+          const website = businessData.reduce((sum, item) => sum + item.website, 0);
+          const chatbot = businessData.reduce((sum, item) => sum + item.chatbot, 0);
+          const bestCampaign = [...campaignData].sort((a, b) => b.leads - a.leads)[0];
+          return { spend, leads, website, chatbot, cpl: spend / leads, bestCampaign };
+        }, []);
+
+        return (
+          <div className="min-h-screen bg-[#faf9f6] text-[#4c4c4c]">
+            {/* Sidebar shown on md (tablet) and larger */}
+            <aside className="fixed left-0 top-0 hidden h-screen w-72 border-r border-[#eadfca] bg-white p-5 md:block">
+              <div className="flex items-center gap-3">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#d19a15]/30 bg-black text-white text-center font-bold text-xs">
+                  GM
+                </div>
+                <div>
+                  <h1 className="text-lg font-semibold text-[#4c4c4c]">GM Dashboard</h1>
+                  <p className="text-xs text-[#8a8a8a]">dashboard.gm-dental.co.uk</p>
+                </div>
+              </div>
+
+              <nav className="mt-8 space-y-2">
+                {[
+                  ['Overview', LayoutDashboard],
+                  ['Businesses', Building2],
+                  ['Campaigns', Megaphone],
+                  ['Website Leads', Globe],
+                  ['Chatbot Leads', Bot],
+                  ['Reports', Download],
+                  ['User Access', ShieldCheck],
+                ].map(([label, Icon]) => (
+                  <button key={label} className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-[#4c4c4c] hover:bg-[#f7efdf]">
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </button>
+                ))}
+              </nav>
+
+              <div className="absolute bottom-5 left-5 right-5 rounded-2xl bg-[#4c4c4c] p-4 text-white border border-[#d19a15]/40">
+                <p className="text-sm font-semibold text-[#f6d78f]">Marketing Command Centre</p>
+                <p className="mt-1 text-xs text-white/75">Spend, leads, CPL, website enquiries and chatbot performance in one place.</p>
+              </div>
+            </aside>
+
+            {/* Main content shifted left margin on md (tablet) and larger */}
+            <main className="md:pl-72">
+              <header className="sticky top-0 z-20 border-b border-[#eadfca] bg-white/90 px-5 py-4 backdrop-blur lg:px-8">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="max-w-xl">
+                    <h2 className="text-2xl font-semibold tracking-tight text-[#4c4c4c]">GM Dashboard</h2>
+                    <p className="text-sm text-[#777] mt-1">Light, owner-level marketing dashboard across GM practices, Fixed Teeth, Warwick Lodge and Plan 4 Growth Academy.</p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0 flex-nowrap">
+                    <Select value={selectedBusiness} onValueChange={setSelectedBusiness}>
+                      <SelectTrigger className="w-[260px] rounded-2xl bg-white border-[#eadfca]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {businesses.map((business) => <SelectItem key={business} value={business}>{business}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Select value={period} onValueChange={setPeriod}>
+                      <SelectTrigger className="w-[160px] rounded-2xl bg-white border-[#eadfca]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {['Today', 'Last 7 Days', 'This Month', 'Last Month', 'Custom Range'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button className="rounded-2xl gap-2 bg-[#d19a15] text-white hover:bg-[#b98510] flex-shrink-0">
+                      <Download className="h-4 w-4" /> Export
+                    </Button>
+                  </div>
+                </div>
+              </header>
+
+              <section className="space-y-6 p-5 lg:p-8">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  <StatCard title="Total Marketing Spend" value={currency(totals.spend)} subtitle="Combined ad spend" icon={PoundSterling} />
+                  <StatCard title="Google Ads Spend" value={currency(businessData.reduce((sum, item) => sum + item.google, 0))} subtitle="Search + display campaigns" icon={Globe} />
+                  <StatCard title="Facebook / Meta Spend" value={currency(businessData.reduce((sum, item) => sum + item.meta, 0))} subtitle="Facebook & Instagram campaigns" icon={Megaphone} />
+                  <StatCard title="Total Leads" value={totals.leads} subtitle="Paid, website and chatbot" icon={Users} />
+                  <StatCard title="Average CPL" value={decimalCurrency(totals.cpl)} subtitle="Across all businesses" icon={Target} />
+                </div>
+
+                <Card className="rounded-2xl shadow-sm border-[#eadfca] bg-white">
+                  <CardContent className="p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="rounded-2xl bg-[#f7efdf] p-3 text-[#d19a15]">
+                          <Trophy className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-[#8a650f]">Highest Result Campaign</p>
+                          <h3 className="mt-1 text-xl font-semibold text-[#4c4c4c]">{totals.bestCampaign.campaign}</h3>
+                          <p className="mt-1 text-sm text-[#777]">{totals.bestCampaign.business} • {totals.bestCampaign.platform}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 text-center">
+                        <div className="rounded-2xl bg-[#faf6ed] px-5 py-3">
+                          <p className="text-xs text-[#777]">Leads</p>
+                          <p className="text-lg font-semibold text-[#4c4c4c]">{totals.bestCampaign.leads}</p>
+                        </div>
+                        <div className="rounded-2xl bg-[#faf6ed] px-5 py-3">
+                          <p className="text-xs text-[#777]">CPL</p>
+                          <p className="text-lg font-semibold text-[#4c4c4c]">{decimalCurrency(totals.bestCampaign.cpl)}</p>
+                        </div>
+                        <div className="rounded-2xl bg-[#faf6ed] px-5 py-3">
+                          <p className="text-xs text-[#777]">Spend</p>
+                          <p className="text-lg font-semibold text-[#4c4c4c]">{currency(totals.bestCampaign.spend)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
+                  <StatCard title="Website Leads" value={totals.website} subtitle="Website enquiry submissions" icon={Globe} />
+                  <StatCard title="Chatbot Leads" value={totals.chatbot} subtitle="Chatbot-generated enquiries" icon={Bot} />
+                </div>
+
+                <div className="grid gap-6 xl:grid-cols-3">
+                  <Card className="rounded-2xl shadow-sm border-[#eadfca] xl:col-span-2">
+                    <CardContent className="p-5">
+                      <div className="mb-5 flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold text-[#4c4c4c]">Spend vs Leads Trend</h3>
+                          <p className="text-sm text-[#777]">Monthly trend for owner review.</p>
+                        </div>
+                        <Badge className="rounded-xl bg-[#f7efdf] text-[#8a650f] hover:bg-[#f7efdf]">Live once APIs connect</Badge>
+                      </div>
+                      <div className="h-80">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={trendData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#eadfca" />
+                            <XAxis dataKey="month" />
+                            <YAxis />
+                            <Tooltip />
+                            <Line type="monotone" dataKey="spend" stroke="#d19a15" strokeWidth={3} />
+                            <Line type="monotone" dataKey="leads" stroke="#4c4c4c" strokeWidth={3} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-2xl shadow-sm border-[#eadfca]">
+                    <CardContent className="p-5">
+                      <h3 className="text-lg font-semibold text-[#4c4c4c]">Lead Source Mix</h3>
+                      <p className="text-sm text-[#777]">Where enquiries are coming from.</p>
+                      <div className="mt-5 h-72">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={sourceData} dataKey="value" nameKey="name" outerRadius={95} label />
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Tabs defaultValue="businesses" className="space-y-4">
+                  <TabsList className="rounded-2xl bg-[#f7efdf] p-1">
+                    <TabsTrigger value="businesses" className="rounded-xl">Business Performance</TabsTrigger>
+                    <TabsTrigger value="campaigns" className="rounded-xl">Campaign Performance</TabsTrigger>
+                    <TabsTrigger value="users" className="rounded-xl">User Roles</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="businesses">
+                    <Card className="rounded-2xl shadow-sm border-[#eadfca]">
+                      <CardContent className="p-0">
+                        <div className="flex items-center justify-between border-b border-[#eadfca] p-5">
+                          <div>
+                            <h3 className="text-lg font-semibold text-[#4c4c4c]">Business Comparison</h3>
+                            <p className="text-sm text-[#777]">Compare spend, leads and cost per lead.</p>
+                          </div>
+                          <Button variant="outline" className="rounded-2xl gap-2 border-[#d19a15]/40 text-[#8a650f]">
+                            <Filter className="h-4 w-4" /> Filter
+                          </Button>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-[#faf6ed] text-xs uppercase text-[#777]">
+                              <tr>
+                                <th className="px-5 py-3">Business</th>
+                                <th className="px-5 py-3">Google Spend</th>
+                                <th className="px-5 py-3">Meta Spend</th>
+                                <th className="px-5 py-3">Total Spend</th>
+                                <th className="px-5 py-3">Leads</th>
+                                <th className="px-5 py-3">Website</th>
+                                <th className="px-5 py-3">Chatbot</th>
+                                <th className="px-5 py-3">CPL</th>
+                                <th className="px-5 py-3">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#f0e7d7]">
+                              {businessData.map((item) => (
+                                <tr key={item.name} className="hover:bg-[#faf6ed]">
+                                  <td className="px-5 py-4 font-medium">{item.name}</td>
+                                  <td className="px-5 py-4">{currency(item.google)}</td>
+                                  <td className="px-5 py-4">{currency(item.meta)}</td>
+                                  <td className="px-5 py-4 font-semibold">{currency(item.google + item.meta)}</td>
+                                  <td className="px-5 py-4">{item.leads}</td>
+                                  <td className="px-5 py-4">{item.website}</td>
+                                  <td className="px-5 py-4">{item.chatbot}</td>
+                                  <td className="px-5 py-4 font-semibold">{decimalCurrency(item.cpl)}</td>
+                                  <td className="px-5 py-4"><Badge variant="outline" className="rounded-xl border-[#d19a15]/40 text-[#8a650f]">{item.status}</Badge></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+
+                  <TabsContent value="campaigns">
+                    <Card className="rounded-2xl shadow-sm border-[#eadfca]">
+                      <CardContent className="p-0">
+                        <div className="border-b border-[#eadfca] p-5">
+                          <h3 className="text-lg font-semibold text-[#4c4c4c]">Campaign Performance</h3>
+                          <p className="text-sm text-[#777]">Campaign-level spend, clicks, leads and CPL.</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-[#faf6ed] text-xs uppercase text-[#777]">
+                              <tr>
+                                <th className="px-5 py-3">Business</th>
+                                <th className="px-5 py-3">Platform</th>
+                                <th className="px-5 py-3">Campaign</th>
+                                <th className="px-5 py-3">Spend</th>
+                                <th className="px-5 py-3">Clicks</th>
+                                <th className="px-5 py-3">Leads</th>
+                                <th className="px-5 py-3">CPL</th>
+                                <th className="px-5 py-3">Conversions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#f0e7d7]">
+                              {campaignData.map((item) => (
+                                <tr key={`${item.business}-${item.campaign}`} className="hover:bg-[#faf6ed]">
+                                  <td className="px-5 py-4 font-medium">{item.business}</td>
+                                  <td className="px-5 py-4">{item.platform}</td>
+                                  <td className="px-5 py-4">{item.campaign}</td>
+                                  <td className="px-5 py-4">{currency(item.spend)}</td>
+                                  <td className="px-5 py-4">{item.clicks}</td>
+                                  <td className="px-5 py-4">{item.leads}</td>
+                                  <td className="px-5 py-4 font-semibold">{decimalCurrency(item.cpl)}</td>
+                                  <td className="px-5 py-4">{item.conversions}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="users">
+                    <Card className="rounded-2xl shadow-sm border-[#eadfca]">
+                      <CardContent className="p-0">
+                        <div className="border-b border-[#eadfca] p-5">
+                          <h3 className="text-lg font-semibold text-[#4c4c4c]">User Access Structure</h3>
+                          <p className="text-sm text-[#777]">Super admins can manage users. Practice managers see assigned practice data only. Conversion managers can feed lead conversion data.</p>
+                        </div>
+                        <div className="grid gap-4 p-5 md:grid-cols-3">
+                          <div className="rounded-2xl border border-[#eadfca] bg-[#faf6ed] p-5">
+                            <Crown className="mb-3 h-5 w-5 text-[#d19a15]" />
+                            <h4 className="font-semibold text-[#4c4c4c]">Super Admin</h4>
+                            <p className="mt-2 text-sm text-[#777]">Full access to all businesses, integrations, reporting, users and exports.</p>
+                          </div>
+                          <div className="rounded-2xl border border-[#eadfca] bg-white p-5">
+                            <Building2 className="mb-3 h-5 w-5 text-[#d19a15]" />
+                            <h4 className="font-semibold text-[#4c4c4c]">Practice Manager</h4>
+                            <p className="mt-2 text-sm text-[#777]">Can view assigned practice performance, spend, leads and campaign results.</p>
+                          </div>
+                          <div className="rounded-2xl border border-[#eadfca] bg-white p-5">
+                            <ShieldCheck className="mb-3 h-5 w-5 text-[#d19a15]" />
+                            <h4 className="font-semibold text-[#4c4c4c]">Conversion Manager</h4>
+                            <p className="mt-2 text-sm text-[#777]">Can update lead quality, booked consultation and conversion status for assigned practice.</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                </Tabs>
+              </section>
+            </main>
+          </div>
+        );
+      }
+
+      // Render App
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<MarketingDashboardUI />);
+    </script>
+</body>
+</html>
