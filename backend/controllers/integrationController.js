@@ -52,7 +52,6 @@ export async function save(req, res, next) {
       if (missing.length) {
         const err = new Error(`Missing required field(s): ${missing.join(", ")}`);
         err.status = 400;
-        err.fields = missing;
         throw err;
       }
 
