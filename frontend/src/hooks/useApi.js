@@ -38,23 +38,21 @@ export function useTrend() {
   });
 }
 
-// Org-level (BYO) provider project credentials, e.g. the org's Google API project.
-export function useOrgSettings(provider) {
+export function useHero() {
   return useQuery({
-    queryKey: ['orgSettings', provider],
-    queryFn: () => api.get(`/api/org-settings/${provider}`).then((d) => d.settings),
+    queryKey: ['metrics', 'hero'],
+    queryFn: () => api.get('/api/metrics/hero').then((d) => d.hero),
+  });
+}
+
+export function useJobHealth() {
+  return useQuery({
+    queryKey: ['metrics', 'jobHealth'],
+    queryFn: () => api.get('/api/metrics/job-health').then((d) => d.jobs),
   });
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────
-export function useSaveOrgSettings(provider) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (payload) => api.put(`/api/org-settings/${provider}`, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['orgSettings', provider] }),
-  });
-}
-
 export function useSaveIntegration() {
   const qc = useQueryClient();
   return useMutation({

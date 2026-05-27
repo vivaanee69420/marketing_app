@@ -7,7 +7,6 @@ import { currency } from '../lib/format.js';
 import * as mock from '../lib/mock.js';
 import {
   useBusinesses, useIntegrations, useSaveIntegration, useSync,
-  useOrgSettings, useSaveOrgSettings,
 } from '../hooks/useApi.js';
 
 // ── Morning automation ────────────────────────────────────────────────────────
@@ -148,9 +147,18 @@ function statusPill(integration) {
 
 function IntegrationBlock({ provider, businessId, integration }) {
   const isMeta = provider === 'meta';
+  const i = integration || {};
   const [accountName, setAccountName] = useState('');
-  const [accountId, setAccountId] = useState('');
-  const [token, setToken] = useState('');
+  const [accountId, setAccountId] = useState(i.external_account_id || '');
+  const [token, setToken] = useState('');                 // access (meta) | refresh (google)
+  // Google project creds
+  const [clientId, setClientId] = useState(i.client_id || '');
+  const [clientSecret, setClientSecret] = useState('');
+  const [devToken, setDevToken] = useState('');
+  const [loginCid, setLoginCid] = useState(i.login_customer_id || '');
+  // Meta app creds
+  const [appId, setAppId] = useState(i.app_id || '');
+  const [appSecret, setAppSecret] = useState('');
   const save = useSaveIntegration();
 
   function submit(e) {
@@ -160,9 +168,26 @@ function IntegrationBlock({ provider, businessId, integration }) {
       provider,
       external_account_id: accountId,
       account_name: accountName || undefined,
-      ...(isMeta ? { access_token: token } : { refresh_token: token }),
+      ...(isMeta
+        ? {
+            ...(token ? { access_token: token } : {}),
+            ...(appId ? { app_id: appId } : {}),
+            ...(appSecret ? { app_secret: appSecret } : {}),
+          }
+        : {
+            ...(token ? { refresh_token: token } : {}),
+            client_id: clientId,
+            login_customer_id: loginCid,
+            ...(clientSecret ? { client_secret: clientSecret } : {}),
+            ...(devToken ? { developer_token: devToken } : {}),
+          }),
     });
   }
+
+  // First-connect needs a token; edits may leave secrets blank.
+  const tokenStored = isMeta ? i.has_access_token : i.has_refresh_token;
+  const canSubmit = !!businessId && !!accountId && (!!token || tokenStored)
+    && (isMeta || (!!clientId && (i.has_client_secret || !!clientSecret) && (i.has_developer_token || !!devToken)));
 
   return (
     <SoftCard>
@@ -171,71 +196,36 @@ function IntegrationBlock({ provider, businessId, integration }) {
           <strong>{isMeta ? 'Meta' : 'Google'}</strong>
           {statusPill(integration)}
         </div>
-        <InputField label="Account Name" value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder="optional label" />
+        <InputField label="Account Name" value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder={i.account_name || 'optional label'} />
         <InputField label={isMeta ? 'Ad Account ID (act_…)' : 'Customer ID'} value={accountId} onChange={(e) => setAccountId(e.target.value)} />
-        <InputField label={isMeta ? 'Access Token' : 'OAuth Refresh Token'} type="password" value={token} onChange={(e) => setToken(e.target.value)} />
-        {isMeta && <span className="subtle">Use a Meta Business Manager System User token (set non-expiring). No app id/secret needed.</span>}
-        {!isMeta && <span className="subtle">Set your org’s Google API project (client id/secret, developer token) once in the card above.</span>}
+        <InputField
+          label={isMeta ? 'Access Token' : 'OAuth Refresh Token'}
+          type="password" value={token} onChange={(e) => setToken(e.target.value)}
+          placeholder={tokenStored ? '•••• saved — blank keeps it' : ''}
+        />
+        {!isMeta && (
+          <>
+            <InputField label="OAuth Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+            <InputField label="Login Customer ID (optional)" value={loginCid} onChange={(e) => setLoginCid(e.target.value)} placeholder="manager account, digits only" />
+            <InputField label="OAuth Client Secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={i.has_client_secret ? '•••• saved — blank keeps it' : ''} />
+            <InputField label="Developer Token" type="password" value={devToken} onChange={(e) => setDevToken(e.target.value)} placeholder={i.has_developer_token ? '•••• saved — blank keeps it' : ''} />
+            <span className="subtle">Each business uses its own Google Cloud OAuth client + Ads developer token. Customer id + refresh token are this account's.</span>
+          </>
+        )}
+        {isMeta && (
+          <>
+            <InputField label="App ID (optional)" value={appId} onChange={(e) => setAppId(e.target.value)} />
+            <InputField label="App Secret (optional)" type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} placeholder={i.has_app_secret ? '•••• saved — blank keeps it' : ''} />
+            <span className="subtle">Use a Meta Business Manager System User token (set non-expiring). App id/secret optional.</span>
+          </>
+        )}
         <div className="row">
-          <Button variant="primary" type="submit" disabled={save.isPending || !businessId || !accountId || !token}>
+          <Button variant="primary" type="submit" disabled={save.isPending || !canSubmit}>
             {save.isPending ? 'Saving…' : 'Save & connect'}
           </Button>
         </div>
         {save.isError && <Notice tone="issue">{save.error.message}</Notice>}
         {save.isSuccess && <Notice tone="good">Saved. Run a sync to pull data.</Notice>}
-      </form>
-    </SoftCard>
-  );
-}
-
-// Org-wide Google API project credentials (BYO). Entered once per organisation.
-function GoogleProjectCard() {
-  const settingsQ = useOrgSettings('google');
-  if (settingsQ.isLoading) {
-    return <SoftCard><span className="subtle">Loading Google project…</span></SoftCard>;
-  }
-  // Remount (fresh initial state) when the loaded settings identity changes.
-  return <GoogleProjectForm settings={settingsQ.data || {}} />;
-}
-
-function GoogleProjectForm({ settings }) {
-  const save = useSaveOrgSettings('google');
-  const [clientId, setClientId] = useState(settings.client_id || '');
-  const [clientSecret, setClientSecret] = useState('');
-  const [devToken, setDevToken] = useState('');
-  const [loginCid, setLoginCid] = useState(settings.login_customer_id || '');
-
-  function submit(e) {
-    e.preventDefault();
-    save.mutate({
-      client_id: clientId,
-      login_customer_id: loginCid,
-      ...(clientSecret ? { client_secret: clientSecret } : {}),
-      ...(devToken ? { developer_token: devToken } : {}),
-    });
-  }
-
-  return (
-    <SoftCard>
-      <form className="stack" onSubmit={submit}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>Google API project (organisation-wide)</strong>
-          {settings.configured ? <Pill tone="ok">Configured</Pill> : <Pill tone="err">Not set</Pill>}
-        </div>
-        <span className="subtle">Your own Google Cloud OAuth client + Google Ads developer token. Entered once for this organisation; reused by every business’s Google connection.</span>
-        <div className="grid cols-2">
-          <InputField label="OAuth Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
-          <InputField label="Login Customer ID (optional)" value={loginCid} onChange={(e) => setLoginCid(e.target.value)} placeholder="manager account, digits only" />
-          <InputField label="OAuth Client Secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={settings.has_client_secret ? '•••• saved — blank keeps it' : ''} />
-          <InputField label="Developer Token" type="password" value={devToken} onChange={(e) => setDevToken(e.target.value)} placeholder={settings.has_developer_token ? '•••• saved — blank keeps it' : ''} />
-        </div>
-        <div>
-          <Button variant="primary" type="submit" disabled={save.isPending || !clientId}>
-            {save.isPending ? 'Saving…' : 'Save Google project'}
-          </Button>
-        </div>
-        {save.isError && <Notice tone="issue">{save.error.message}</Notice>}
-        {save.isSuccess && <Notice tone="good">Saved. Now connect each business’s Google customer id + refresh token below.</Notice>}
       </form>
     </SoftCard>
   );
@@ -263,7 +253,6 @@ function Integrations() {
         )}
       />
       <div className="stack">
-        <GoogleProjectCard />
         <SelectField
           label="Business"
           options={businesses.map((b) => ({ value: b.id, label: b.name }))}
