@@ -16,14 +16,15 @@ const FIELD_MAP = {
 
 /**
  * Merge submitted creds into the existing config. Plain ids overwrite when
- * present; a secret is encrypted+written ONLY when a new value was submitted,
- * so a blank field on edit keeps the stored ciphertext.
+ * present; a secret is encrypted+written ONLY when a non-empty new value was
+ * submitted, so a blank/omitted field on edit keeps the stored ciphertext.
+ * (The empty-string guard also keeps callers from storing encrypt("").)
  */
 export function mergeProviderConfig(provider, existing, input, encrypt) {
   const map = FIELD_MAP[provider];
   const cfg = { ...(existing || {}) };
   for (const f of map.plain) if (input[f] !== undefined) cfg[f] = input[f];
-  for (const f of map.secret) if (input[f] !== undefined) cfg[`${f}_enc`] = encrypt(input[f]);
+  for (const f of map.secret) if (input[f] !== undefined && input[f] !== "") cfg[`${f}_enc`] = encrypt(input[f]);
   return cfg;
 }
 

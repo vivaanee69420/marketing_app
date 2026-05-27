@@ -4,7 +4,10 @@
 
 const ORG = `nullif(current_setting('app.current_org', true), '')::uuid`;
 
-/** Connection status per business+provider — NO secrets returned. */
+/** Connection status per business+provider — NO secrets returned.
+ *  NOTE: this query intentionally takes NO bound parameters. The `?` jsonb
+ *  key-exists operators below are literal SQL; do not add `$n` parameters to
+ *  this query without rewriting `?` (some pg parse modes treat `?` specially). */
 export async function listStatus(tx) {
   const { rows } = await tx.query(
     `select i.id, i.business_id, b.name as business_name, i.provider, i.status,
