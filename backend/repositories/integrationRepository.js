@@ -11,7 +11,13 @@ export async function listStatus(tx) {
             i.external_account_id, i.account_name, i.last_sync_at,
             i.last_sync_status, i.last_error,
             (i.access_token_enc is not null)  as has_access_token,
-            (i.refresh_token_enc is not null) as has_refresh_token
+            (i.refresh_token_enc is not null) as has_refresh_token,
+            i.config_json->>'client_id'         as client_id,
+            i.config_json->>'login_customer_id' as login_customer_id,
+            i.config_json->>'app_id'            as app_id,
+            (i.config_json ? 'client_secret_enc')   as has_client_secret,
+            (i.config_json ? 'developer_token_enc') as has_developer_token,
+            (i.config_json ? 'app_secret_enc')      as has_app_secret
        from integrations i
        join businesses b on b.id = i.business_id
       order by b.name, i.provider`
@@ -28,23 +34,25 @@ export async function getByBusinessProvider(tx, businessId, provider) {
   return rows[0] || null;
 }
 
-/** Insert or update credentials for a business+provider. */
-export async function upsert(tx, { businessId, provider, externalAccountId, accountName, accessTokenEnc, refreshTokenEnc }) {
+/** Insert or update credentials for a business+provider. config_json is the
+ *  already-merged config; tokens are pre-encrypted or null (null keeps stored). */
+export async function upsert(tx, { businessId, provider, externalAccountId, accountName, accessTokenEnc, refreshTokenEnc, configJson }) {
   const { rows } = await tx.query(
     `insert into integrations
        (org_id, business_id, provider, status, external_account_id, account_name,
-        access_token_enc, refresh_token_enc, updated_at)
-     values (${ORG}, $1, $2, 'connected', $3, $4, $5, $6, now())
+        access_token_enc, refresh_token_enc, config_json, updated_at)
+     values (${ORG}, $1, $2, 'connected', $3, $4, $5, $6, $7::jsonb, now())
      on conflict (org_id, business_id, provider) do update set
        status              = 'connected',
        external_account_id = excluded.external_account_id,
        account_name        = excluded.account_name,
        access_token_enc    = coalesce(excluded.access_token_enc, integrations.access_token_enc),
        refresh_token_enc   = coalesce(excluded.refresh_token_enc, integrations.refresh_token_enc),
+       config_json         = excluded.config_json,
        last_error          = null,
        updated_at          = now()
      returning id, business_id, provider, status, external_account_id, account_name`,
-    [businessId, provider, externalAccountId, accountName, accessTokenEnc, refreshTokenEnc]
+    [businessId, provider, externalAccountId, accountName, accessTokenEnc, refreshTokenEnc, JSON.stringify(configJson || {})]
   );
   return rows[0];
 }
