@@ -1,7 +1,7 @@
 import { withOrg } from "../config/db.js";
 import { decrypt } from "../utils/crypto.js";
 import * as integrations from "../repositories/integrationRepository.js";
-import * as orgSettings from "../repositories/orgSettingsRepository.js";
+import { googleCallArgs } from "./providerCreds.js";
 import * as sync from "../repositories/syncRepository.js";
 import { fetchInsights as fetchMeta } from "../providers/meta.js";
 import { fetchInsights as fetchGoogle } from "../providers/google.js";
@@ -20,7 +20,7 @@ function defaultWindow() {
   return { since: ymd(since), until: ymd(until) };
 }
 
-async function callProvider(tx, provider, integration, window) {
+function callProvider(provider, integration, window) {
   if (provider === "meta") {
     return fetchMeta({
       accessToken: decrypt(integration.access_token_enc),
@@ -28,22 +28,8 @@ async function callProvider(tx, provider, integration, window) {
       ...window,
     });
   }
-  // Google: BYO per tenant — the API project creds come from the org's settings.
-  const cfg = (await orgSettings.getProviderSettings(tx, "google"))?.config || {};
-  if (!cfg.client_id || !cfg.client_secret_enc || !cfg.developer_token_enc) {
-    throw new Error(
-      "Google API project not configured for this organisation (Settings → Integrations → Google API project)"
-    );
-  }
-  return fetchGoogle({
-    refreshToken: decrypt(integration.refresh_token_enc),
-    customerId: integration.external_account_id,
-    clientId: cfg.client_id,
-    clientSecret: decrypt(cfg.client_secret_enc),
-    developerToken: decrypt(cfg.developer_token_enc),
-    loginCustomerId: cfg.login_customer_id || null,
-    ...window,
-  });
+  // Google: BYO per business — creds come from integration.config_json.
+  return fetchGoogle({ ...googleCallArgs(integration, decrypt), ...window });
 }
 
 /**
@@ -64,7 +50,7 @@ export async function syncOne(businessId, provider, windowOverride) {
       const tokenCol = provider === "meta" ? integration.access_token_enc : integration.refresh_token_enc;
       if (!tokenCol) throw new Error(`${provider} credentials missing`);
 
-      const rows = await callProvider(tx, provider, integration, window);
+      const rows = await callProvider(provider, integration, window);
 
       // Resolve external→internal ids once per entity.
       const campaignIds = new Map();
