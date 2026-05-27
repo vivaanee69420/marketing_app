@@ -1,7 +1,7 @@
 import { supabaseAuth } from "../config/supabase.js";
 import { orgContext } from "../config/db.js";
 import { readAccessToken } from "../utils/sessionCookies.js";
-import { firstOrgForUser } from "../repositories/authRepository.js";
+import { firstOrgForUser, getProfileFlags } from "../repositories/authRepository.js";
 
 /**
  * Validate the Supabase JWT server-side. The frontend never talks to Supabase —
@@ -41,6 +41,23 @@ export async function requireOrg(req, res, next) {
     }
     req.orgId = orgId;
     orgContext.run({ orgId, userId: req.user.id }, () => next());
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Gate to superadmins only. MUST run after requireAuth. The is_superadmin flag
+ * is read server-side from profiles every request — the client copy is never
+ * trusted for access control. 403 otherwise.
+ */
+export async function requireSuperadmin(req, res, next) {
+  try {
+    const flags = await getProfileFlags(req.user.id);
+    if (!flags?.is_superadmin) {
+      return res.status(403).json({ error: "not_superadmin" });
+    }
+    next();
   } catch (err) {
     next(err);
   }

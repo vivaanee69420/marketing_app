@@ -16,8 +16,14 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: 'Settings' },
 ];
 
+// Superadmin-only links, appended when the signed-in user is a superadmin.
+const ADMIN_NAV = [
+  { to: '/admin', label: 'User Access', icon: 'ShieldCheck' },
+];
+
 export default function Sidebar() {
   const { user, logout } = useAuth();
+  const navItems = user?.is_superadmin ? [...NAV, ...ADMIN_NAV] : NAV;
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -35,7 +41,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="nav">
-        {NAV.map((n) => (
+        {navItems.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end}
                    className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             <Icon name={n.icon} className="nav-icon" size={18} />

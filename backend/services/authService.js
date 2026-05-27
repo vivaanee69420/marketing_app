@@ -1,5 +1,6 @@
 import { supabaseAuth, supabaseAdmin, hasServiceRole } from "../config/supabase.js";
 import { normalizeUsername } from "../utils/authValidation.js";
+import { loginBlockCode } from "./authPolicy.js";
 import * as authRepo from "../repositories/authRepository.js";
 
 // New signups join this org (single-org phase). A real "create your own org"
@@ -15,8 +16,10 @@ const httpError = (message, status) => Object.assign(new Error(message), { statu
  * Signup = username + email + password.
  *
  *   Zod (controller) → username free? → Supabase createUser (bcrypt+salt) →
- *   provision profile + membership (txn) → sign in → session
+ *   provision profile + membership (txn)
  *
+ * The profile is created 'pending' (profiles.status default) and we do NOT
+ * issue a session — a superadmin must approve the account before it can log in.
  * Password hashing/salting is handled by Supabase Auth (GoTrue, bcrypt) — we
  * never see or store the password. If provisioning fails after the Supabase
  * user exists, we delete that user so a retry is clean (no orphaned auth row).
@@ -55,8 +58,8 @@ export async function signUp({ username, email, password }) {
     throw err;
   }
 
-  const session = await signIn({ username: uname, password });
-  return { user: created.user, ...session };
+  // No session: the account is pending until a superadmin approves it.
+  return { user: created.user, status: "pending" };
 }
 
 /**
@@ -79,8 +82,16 @@ export async function signIn({ username, password }) {
     throw httpError("invalid_credentials", 401);
   }
 
+  // Password is correct — now enforce the approval gate. Status is only checked
+  // AFTER a valid password, so we never reveal account state to anonymous users.
+  const blocked = loginBlockCode(profile.status);
+  if (blocked) {
+    throw httpError(blocked, 403);
+  }
+
   return {
     user: data.user,
+    is_superadmin: !!profile.is_superadmin,
     access_token: data.session.access_token,
     refresh_token: data.session.refresh_token,
     expires_at: data.session.expires_at,

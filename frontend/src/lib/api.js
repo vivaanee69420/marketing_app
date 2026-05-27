@@ -2,13 +2,46 @@
 // by the backend; the token is never readable here. `credentials: 'include'`
 // makes the browser send/receive that cookie cross-origin (SPA → API).
 
-const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+// Normalize VITE_API_BASE_URL so a misconfigured value can't silently turn into
+// a relative path. Railway reference vars resolve to a bare domain (no scheme);
+// without "https://" the browser treats `${BASE}${path}` as relative and posts
+// to the frontend origin instead (→ nginx 405). Force a scheme and drop any
+// trailing slash so we never emit a double slash.
+function normalizeBase(raw) {
+  const v = (raw || 'http://localhost:4000').trim();
+  const withScheme = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  return withScheme.replace(/\/+$/, '');
+}
+
+const BASE = normalizeBase(import.meta.env.VITE_API_BASE_URL);
+
+// Bearer-token auth. The httpOnly session cookie can't be relied on when the
+// SPA and API live on different Railway domains, so the access token is stored
+// here and sent as `Authorization: Bearer` on every request (the backend's
+// readAccessToken accepts either cookie or Bearer). localStorage so the session
+// survives reloads. Tradeoff vs httpOnly cookie: readable by JS → keep the app
+// XSS-clean. credentials:'include' stays so the cookie still works same-origin.
+const TOKEN_KEY = 'mkt_token';
+let authToken = null;
+try { authToken = localStorage.getItem(TOKEN_KEY); } catch { /* no storage */ }
+
+export function setAuthToken(token) {
+  authToken = token || null;
+  try {
+    if (authToken) localStorage.setItem(TOKEN_KEY, authToken);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* no storage */ }
+}
 
 async function request(path, { method = 'GET', body } = {}) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
     credentials: 'include',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -43,8 +76,17 @@ export const api = {
 // Auth endpoints. Tokens live in the httpOnly cookie, so these return the user
 // only. `me` is used on boot to learn whether a session cookie is still valid.
 export const authApi = {
-  signup: (body) => api.post('/api/auth/signup', body).then((d) => d.user),
-  login: (body) => api.post('/api/auth/login', body).then((d) => d.user),
-  logout: () => api.post('/api/auth/logout'),
+  // Signup no longer logs in — returns { status: 'pending' }; the account waits
+  // for superadmin approval before it can log in.
+  signup: (body) => api.post('/api/auth/signup', body),
+  login: (body) => api.post('/api/auth/login', body).then((d) => { setAuthToken(d.token); return d.user; }),
+  logout: () => api.post('/api/auth/logout').finally(() => setAuthToken(null)),
   me: () => api.get('/api/auth/me').then((d) => d.user),
+};
+
+// Superadmin-only user moderation.
+export const adminApi = {
+  listUsers: () => api.get('/api/admin/users').then((d) => d.users),
+  approve: (userId) => api.post(`/api/admin/users/${userId}/approve`).then((d) => d.user),
+  reject: (userId) => api.post(`/api/admin/users/${userId}/reject`).then((d) => d.user),
 };

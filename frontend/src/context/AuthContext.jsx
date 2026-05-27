@@ -32,10 +32,11 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
+  // Signup does NOT establish a session — the account is pending superadmin
+  // approval. Return the result so the form can show the pending message; the
+  // user stays signed-out and must log in after approval.
   const signup = useCallback(async (creds) => {
-    const u = await authApi.signup(creds);
-    setUser(u);
-    return u;
+    return authApi.signup(creds);
   }, []);
 
   const logout = useCallback(async () => {

@@ -12,11 +12,50 @@
 
 import { pool, query } from "../config/db.js";
 
-/** Resolve a login email from a username. Returns { user_id, email } or null. */
+/** Resolve login fields from a username. Returns { user_id, email, status,
+ *  is_superadmin } or null. status/is_superadmin gate the approval flow. */
 export async function findLoginByUsername(username) {
   const { rows } = await query(
-    `select user_id, email from profiles where username = $1`,
+    `select user_id, email, status, is_superadmin from profiles where username = $1`,
     [username]
+  );
+  return rows[0] || null;
+}
+
+/** Approval flags for an authenticated user. { status, is_superadmin } or null. */
+export async function getProfileFlags(userId) {
+  const { rows } = await query(
+    `select status, is_superadmin from profiles where user_id = $1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+/** A single profile (for moderation guards). { user_id, is_superadmin, status } or null. */
+export async function getProfileById(userId) {
+  const { rows } = await query(
+    `select user_id, username, email, status, is_superadmin from profiles where user_id = $1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+/** All users for the admin screen — pending first, then newest. No secrets. */
+export async function listUsers() {
+  const { rows } = await query(
+    `select user_id, username, email, status, is_superadmin, created_at
+       from profiles
+      order by (status = 'pending') desc, created_at desc`
+  );
+  return rows;
+}
+
+/** Set a user's approval status. Returns the updated row or null if no such user. */
+export async function setUserStatus(userId, status) {
+  const { rows } = await query(
+    `update profiles set status = $2 where user_id = $1
+       returning user_id, username, email, status, is_superadmin`,
+    [userId, status]
   );
   return rows[0] || null;
 }

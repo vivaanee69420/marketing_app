@@ -2,8 +2,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { testConnection } from "./config/db.js";
-import { requireAuth, requireOrg } from "./middleware/authMiddleware.js";
+import { requireAuth, requireOrg, requireSuperadmin } from "./middleware/authMiddleware.js";
 import authRoutes from "./routes/authRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 import businessRoutes from "./routes/businessRoutes.js";
 import integrationRoutes from "./routes/integrationRoutes.js";
 import syncRoutes from "./routes/syncRoutes.js";
@@ -15,10 +16,20 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// credentials:true is required for the browser to send/receive the httpOnly
-// session cookie cross-origin (SPA on :5173 → API on :4000). With credentials,
-// the allowed origin must be explicit, never "*".
-app.use(cors({ origin: process.env.WEB_ORIGIN || "http://localhost:5173", credentials: true }));
+// CORS. WEB_ORIGIN controls which browser origins may call the API:
+//   - unset or "*"          → allow ALL origins (origin reflected back)
+//   - comma-separated list  → allow exactly those origins
+// credentials:true lets the browser send/receive the httpOnly session cookie
+// cross-origin. With credentials the response header must echo the specific
+// request origin, never the literal "*", so for allow-all we use `origin:true`
+// (cors echoes the caller's Origin); for a list we pass the array straight in.
+const corsOrigins = (process.env.WEB_ORIGIN || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+const corsAllowAll = corsOrigins.length === 0 || corsOrigins.includes("*");
+app.use(cors({
+  origin: corsAllowAll ? true : corsOrigins,
+  credentials: true,
+}));
 app.use(express.json());
 
 // Liveness — process is up.
@@ -38,6 +49,9 @@ app.get("/health/db", async (_req, res) => {
 
 // Auth (Supabase, validated server-side)
 app.use("/api/auth", authRoutes);
+
+// Superadmin-only user moderation (approve/reject signups).
+app.use("/api/admin", requireAuth, requireSuperadmin, adminRoutes);
 
 // Domain routes. requireAuth validates the Supabase JWT (cookie); requireOrg
 // resolves the tenant from the user's membership and scopes every withOrg call

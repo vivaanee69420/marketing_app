@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api.js';
+import { api, adminApi } from '../lib/api.js';
 
 // ── Queries ───────────────────────────────────────────────────────────────
 export function useBusinesses() {
@@ -59,7 +59,31 @@ export function useJobHealth() {
   });
 }
 
+// Superadmin-only: list users + approve/reject pending signups.
+export function useUsers() {
+  return useQuery({
+    queryKey: ['admin', 'users'],
+    queryFn: () => adminApi.listUsers(),
+  });
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────
+export function useApproveUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId) => adminApi.approve(userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+  });
+}
+
+export function useRejectUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId) => adminApi.reject(userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+  });
+}
+
 export function useSaveIntegration() {
   const qc = useQueryClient();
   return useMutation({

@@ -12,17 +12,23 @@ const REFRESH_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const isProd = () => process.env.NODE_ENV === "production";
 
+// In production the SPA and API run on separate domains (e.g. Railway gives
+// frontend-*.up.railway.app and backend-*.up.railway.app, which are cross-site),
+// so the session cookie must be SameSite=None to be sent on those cross-site
+// fetches — None REQUIRES Secure, which prod already sets. In dev the SPA
+// (localhost:5173) and API (localhost:4000) are same-site, so Lax works and
+// avoids needing Secure over http. CSRF is still blunted: the API only accepts
+// JSON (Content-Type: application/json forces a CORS preflight) and CORS allows
+// exactly one origin with credentials, so a foreign site can't forge requests.
+const sameSite = () => (isProd() ? "none" : "lax");
+
 /**
- * Cookie options. SameSite=Lax means the cookie is NOT sent on cross-site
- * subrequests (a form/fetch from evil.com), which is what blunts CSRF here; it
- * IS sent on same-site requests including the SPA's cross-port fetch in dev
- * (localhost:5173 → localhost:4000 are same-site, different origin). Secure is
- * on in production only so http://localhost dev still works.
+ * Cookie options. See `sameSite` above for the None-in-prod / Lax-in-dev split.
  */
 export function buildCookieOptions(maxAgeMs) {
   return {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: sameSite(),
     secure: isProd(),
     path: "/",
     maxAge: maxAgeMs,
@@ -50,7 +56,7 @@ export function setSession(res, { access_token, refresh_token, expires_at }) {
 
 /** Clear both session cookies (logout). Options must match to actually delete. */
 export function clearSession(res) {
-  const opts = { httpOnly: true, sameSite: "lax", secure: isProd(), path: "/" };
+  const opts = { httpOnly: true, sameSite: sameSite(), secure: isProd(), path: "/" };
   res.clearCookie(ACCESS_COOKIE, opts);
   res.clearCookie(REFRESH_COOKIE, opts);
 }

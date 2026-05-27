@@ -17,6 +17,8 @@ const FRIENDLY = {
   email_taken: 'An account with that email already exists.',
   no_org_membership: 'Your account is not attached to any organisation yet.',
   missing_token: 'Please sign in.',
+  pending_approval: 'Your account is awaiting admin approval. You can sign in once approved.',
+  account_rejected: 'Your account request was declined. Contact your administrator.',
 };
 
 export default function AuthForm({ mode }) {
@@ -30,6 +32,7 @@ export default function AuthForm({ mode }) {
   const [error, setError] = useState(null);
   const [fields, setFields] = useState(null); // per-field zod errors from the API
   const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false); // signup done → pending screen
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -39,11 +42,13 @@ export default function AuthForm({ mode }) {
     setFields(null);
     setBusy(true);
     try {
-      const payload = isSignup
-        ? { username: form.username, email: form.email, password: form.password }
-        : { username: form.username, password: form.password };
-      await (isSignup ? signup(payload) : login(payload));
-      navigate(dest, { replace: true });
+      if (isSignup) {
+        await signup({ username: form.username, email: form.email, password: form.password });
+        setSubmitted(true); // no session — show the "awaiting approval" screen
+      } else {
+        await login({ username: form.username, password: form.password });
+        navigate(dest, { replace: true });
+      }
     } catch (err) {
       if (err.status === 400 && err.data?.fields) {
         setFields(err.data.fields);
@@ -56,6 +61,25 @@ export default function AuthForm({ mode }) {
   }
 
   const fieldErr = (k) => fields?.[k]?.[0];
+
+  // Signup success: account created but pending approval — no app access yet.
+  if (isSignup && submitted) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="brand-mark">RC</div>
+          <h1>Almost there</h1>
+          <Notice tone="good">
+            Account created. An administrator needs to approve it before you can
+            sign in. You'll be able to log in once you're approved.
+          </Notice>
+          <p className="subtle auth-switch">
+            <Link to="/login">Back to sign in</Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="auth-screen">

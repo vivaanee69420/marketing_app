@@ -13,6 +13,7 @@ import Imports from './pages/Imports.jsx';
 import Audit from './pages/Audit.jsx';
 import Reports from './pages/Reports.jsx';
 import Settings from './pages/Settings.jsx';
+import Admin from './pages/Admin.jsx';
 
 // Gate the app behind a session. While the boot /me is in flight we render
 // nothing (avoids a flash of the login screen for already-signed-in users).
@@ -22,6 +23,16 @@ function RequireAuth({ children }) {
   const location = useLocation();
   if (loading) return <div className="auth-screen" />;
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  return children;
+}
+
+// Superadmin-only routes. Authed + is_superadmin, else bounce to Overview.
+// The server re-checks is_superadmin on every admin API call — this is just UX.
+function RequireSuperadmin({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="auth-screen" />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.is_superadmin) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -56,6 +67,7 @@ export default function App() {
         <Route path="audit" element={<Audit />} />
         <Route path="reports" element={<Reports />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="admin" element={<RequireSuperadmin><Admin /></RequireSuperadmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
