@@ -128,7 +128,7 @@ health) and drills into the Growth Hub per site.
   never stops the run).
 - Meta: Graph API `v20.0` `/act_<id>/insights` (campaign→adset→ad, spend,
   clicks, impressions, daily).
-- Google Ads: `v17` `googleAds:searchStream` GAQL (`LAST_30_DAYS`,
+- Google Ads: `v24` `googleAds:searchStream` GAQL (`LAST_30_DAYS`,
   `ad_group_ad` level, `cost_micros`/1e6).
 
 ### 6.4 Conversions & attribution

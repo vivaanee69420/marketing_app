@@ -1,12 +1,80 @@
 /**
- * Google Ads provider — Google Ads REST API v17
+ * Google Ads provider — Google Ads REST API v24
  *
- * Endpoint: POST https://googleads.googleapis.com/v17/customers/<customerId>/googleAds:searchStream
+ * Endpoint: POST https://googleads.googleapis.com/v24/customers/<customerId>/googleAds:searchStream
  * Query target: ad_group_ad (GAQL), joining campaign, ad_group, ad_group_ad, segments, metrics
  * spend = metrics.cost_micros / 1_000_000  (micros → currency units)
  *
  * Docs: https://developers.google.com/google-ads/api/docs/query/overview
+ *
+ * API_VERSION is the one knob to turn when Google sunsets a version (a sunset
+ * version returns a generic 404 HTML page; a not-yet-released version returns a
+ * JSON "Method not found."). Check the release notes before bumping:
+ * https://developers.google.com/google-ads/api/docs/release-notes
  */
+
+const API_VERSION = 'v24';
+const ADS_BASE = `https://googleads.googleapis.com/${API_VERSION}`;
+
+/** Exchange an OAuth2 refresh token for a short-lived access token. */
+async function getAccessToken({ clientId, clientSecret, refreshToken }) {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type:    'refresh_token',
+    }).toString(),
+  });
+  if (!res.ok) {
+    const snippet = (await res.text()).slice(0, 300);
+    throw new Error(`Google OAuth ${res.status}: ${snippet}`);
+  }
+  const { access_token: accessToken } = await res.json();
+  return accessToken;
+}
+
+/** Build the Ads API request headers; login-customer-id only when a manager CID is set. */
+function adsHeaders({ accessToken, developerToken, loginCid }) {
+  const headers = {
+    'Authorization':   `Bearer ${accessToken}`,
+    'developer-token': developerToken,
+    'Content-Type':    'application/json',
+  };
+  if (loginCid) headers['login-customer-id'] = loginCid;
+  return headers;
+}
+
+/**
+ * Turn an Ads API error body into a human-readable message. The actionable
+ * reason lives in the GoogleAdsFailure detail; the top-level `message` is often
+ * just a generic "Request contains an invalid argument."
+ */
+function parseAdsError(rawBody, status) {
+  let message = rawBody.slice(0, 500);
+  try {
+    const parsed = JSON.parse(rawBody);
+    const errObj = Array.isArray(parsed) ? parsed[0] : parsed;
+    const err = errObj?.error;
+    if (err) {
+      const detailMsgs = (err.details ?? [])
+        .flatMap((d) => d?.errors ?? [])
+        .map((e) => e?.message)
+        .filter(Boolean);
+      message = detailMsgs.length ? detailMsgs.join(' | ') : (err.message ?? message);
+    }
+  } catch {
+    // leave message as the raw snippet
+  }
+  return `Google Ads ${status}: ${message}`;
+}
+
+/** Normalise a customer id to digits only (Google rejects spaces/dashes). */
+function digits(id) {
+  return String(id).replace(/[\s-]/g, '');
+}
 
 /**
  * Fetch campaign/ad-group/ad performance insights from Google Ads.
@@ -28,35 +96,18 @@ export async function fetchInsights({
   refreshToken, customerId, clientId, clientSecret, developerToken, loginCustomerId, since, until,
 }) {
   // ── 1. Validate the org's Google project credentials ────────────────────────
-  const devToken = developerToken;
-  if (!clientId || !clientSecret || !devToken) {
+  if (!clientId || !clientSecret || !developerToken) {
     throw new Error(
       "Google API project not configured for this organisation — set client id, client secret and developer token in Settings → Integrations"
     );
   }
 
   // ── 2. Normalise customer IDs (Google requires digits only) ─────────────────
-  const cid      = String(customerId).replace(/[\s-]/g, '');
-  const loginCid = loginCustomerId ? String(loginCustomerId).replace(/[\s-]/g, '') : null;
+  const cid      = digits(customerId);
+  const loginCid = loginCustomerId ? digits(loginCustomerId) : null;
 
   // ── 3. Exchange refresh token for an access token ───────────────────────────
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type:    'refresh_token',
-    }).toString(),
-  });
-
-  if (!tokenRes.ok) {
-    const snippet = (await tokenRes.text()).slice(0, 300);
-    throw new Error(`Google OAuth ${tokenRes.status}: ${snippet}`);
-  }
-
-  const { access_token: accessToken } = await tokenRes.json();
+  const accessToken = await getAccessToken({ clientId, clientSecret, refreshToken });
 
   // ── 4. Build GAQL query ─────────────────────────────────────────────────────
   const gaql = `
@@ -70,44 +121,17 @@ export async function fetchInsights({
   `.trim();
 
   // ── 5. Call searchStream ────────────────────────────────────────────────────
-  const adsHeaders = {
-    'Authorization':   `Bearer ${accessToken}`,
-    'developer-token': devToken,
-    'Content-Type':    'application/json',
-  };
-
-  // Only include login-customer-id header when a manager/login CID is provided
-  if (loginCid) {
-    adsHeaders['login-customer-id'] = loginCid;
-  }
-
   const adsRes = await fetch(
-    `https://googleads.googleapis.com/v17/customers/${cid}/googleAds:searchStream`,
+    `${ADS_BASE}/customers/${cid}/googleAds:searchStream`,
     {
       method:  'POST',
-      headers: adsHeaders,
+      headers: adsHeaders({ accessToken, developerToken, loginCid }),
       body:    JSON.stringify({ query: gaql }),
     }
   );
 
   if (!adsRes.ok) {
-    const rawBody   = await adsRes.text();
-    const snippet   = rawBody.slice(0, 300);
-
-    // Try to surface a human-readable message from the error body
-    let message = snippet;
-    try {
-      const parsed = JSON.parse(rawBody);
-      // Body can be an array [{error:{message}}] or object {error:{message}}
-      const errObj = Array.isArray(parsed) ? parsed[0] : parsed;
-      if (errObj?.error?.message) {
-        message = errObj.error.message;
-      }
-    } catch {
-      // leave message as the raw snippet
-    }
-
-    throw new Error(`Google Ads ${adsRes.status}: ${message}`);
+    throw new Error(parseAdsError(await adsRes.text(), adsRes.status));
   }
 
   // searchStream returns an array of chunk objects, each with a `results` array
@@ -146,4 +170,70 @@ export async function fetchInsights({
     impressions: Number(row?.metrics?.impressions || 0),
     conversions: Number(row?.metrics?.conversions || 0),
   }));
+}
+
+/**
+ * List the client (leaf) accounts reachable under a manager account, so the
+ * operator can pick the right Customer ID instead of guessing. Metrics are
+ * forbidden on a manager account, but the `customer_client` resource is not —
+ * it's queried against the manager itself.
+ *
+ * @param {object}  opts
+ * @param {string}  opts.refreshToken
+ * @param {string}  opts.clientId
+ * @param {string}  opts.clientSecret
+ * @param {string}  opts.developerToken
+ * @param {string}  opts.managerId  - the manager/login customer id to enumerate under
+ * @returns {Promise<Array<{id:string,name:string,manager:boolean,status:string,level:number}>>}
+ */
+export async function listClientAccounts({
+  refreshToken, clientId, clientSecret, developerToken, managerId,
+}) {
+  if (!clientId || !clientSecret || !developerToken) {
+    throw new Error(
+      "Google API project not configured for this organisation — set client id, client secret and developer token in Settings → Integrations"
+    );
+  }
+  if (!managerId) {
+    throw new Error("No login/manager customer id set — add it in Settings → Integrations to list accounts");
+  }
+
+  const cid = digits(managerId);
+  const accessToken = await getAccessToken({ clientId, clientSecret, refreshToken });
+
+  // level <= 1 = the manager itself (0) plus its direct client accounts (1).
+  const gaql = `
+    SELECT customer_client.id, customer_client.descriptive_name,
+           customer_client.manager, customer_client.status, customer_client.level
+    FROM customer_client
+    WHERE customer_client.level <= 1
+  `.trim();
+
+  const res = await fetch(
+    `${ADS_BASE}/customers/${cid}/googleAds:searchStream`,
+    {
+      method:  'POST',
+      headers: adsHeaders({ accessToken, developerToken, loginCid: cid }),
+      body:    JSON.stringify({ query: gaql }),
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(parseAdsError(await res.text(), res.status));
+  }
+
+  const chunks = await res.json();
+  const rows = (Array.isArray(chunks) ? chunks : [chunks])
+    .flatMap((chunk) => chunk?.results ?? []);
+
+  return rows.map((row) => {
+    const c = row?.customerClient ?? {};
+    return {
+      id:      String(c.id ?? ''),
+      name:    String(c.descriptiveName ?? ''),
+      manager: Boolean(c.manager),
+      status:  String(c.status ?? ''),
+      level:   Number(c.level ?? 0),
+    };
+  });
 }

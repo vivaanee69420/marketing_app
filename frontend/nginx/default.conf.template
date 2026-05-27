@@ -1,0 +1,32 @@
+# Rendered at container start: ${PORT} → Railway's assigned port (envsubst).
+server {
+    listen       ${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Liveness probe for Railway healthcheck.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok";
+    }
+
+    # Hashed, immutable Vite assets — cache hard.
+    location /assets/ {
+        expires    1y;
+        add_header Cache-Control "public, immutable";
+        try_files  $uri =404;
+    }
+
+    # SPA fallback: client-side routes (React Router) resolve to index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip            on;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types      text/css application/javascript application/json image/svg+xml;
+}

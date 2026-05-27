@@ -31,7 +31,7 @@ Planning / docs. No code yet. Billing deferred to Phase 2 (auth-only MVP).
 - **11 pages / 10 nav links / ~56 UI sections** (see `SECTIONS.md`).
 - **Tenancy:** Organizations (owned in our tables); every row scoped by `org_id` + Supabase RLS.
   Zero cross-org data leakage is a hard requirement.
-- **Integrations live in v1:** Meta Graph v20.0, Google Ads v17, full OAuth +
+- **Integrations live in v1:** Meta Graph v20.0, Google Ads v24, full OAuth +
   daily sync.
 - **AI:** daily per-business + master report, Claude with heuristic fallback.
 - **Automation:** cron at 07:30 (sync) / 08:00 (report+tasks) / 08:05 (email),

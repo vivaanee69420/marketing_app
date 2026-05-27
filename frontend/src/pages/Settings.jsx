@@ -6,7 +6,7 @@ import {
 import { currency } from '../lib/format.js';
 import * as mock from '../lib/mock.js';
 import {
-  useBusinesses, useIntegrations, useSaveIntegration, useSync,
+  useBusinesses, useIntegrations, useSaveIntegration, useSync, useGoogleAccounts,
 } from '../hooks/useApi.js';
 
 // ── Morning automation ────────────────────────────────────────────────────────
@@ -160,6 +160,7 @@ function IntegrationBlock({ provider, businessId, integration }) {
   const [appId, setAppId] = useState(i.app_id || '');
   const [appSecret, setAppSecret] = useState('');
   const save = useSaveIntegration();
+  const accountsM = useGoogleAccounts();
 
   function submit(e) {
     e.preventDefault();
@@ -196,6 +197,9 @@ function IntegrationBlock({ provider, businessId, integration }) {
           <strong>{isMeta ? 'Meta' : 'Google'}</strong>
           {statusPill(integration)}
         </div>
+        {integration?.last_sync_status === 'error' && integration.last_error && (
+          <Notice tone="issue">{integration.last_error}</Notice>
+        )}
         <InputField label="Account Name" value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder={i.account_name || 'optional label'} />
         <InputField label={isMeta ? 'Ad Account ID (act_…)' : 'Customer ID'} value={accountId} onChange={(e) => setAccountId(e.target.value)} />
         <InputField
@@ -207,6 +211,31 @@ function IntegrationBlock({ provider, businessId, integration }) {
           <>
             <InputField label="OAuth Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
             <InputField label="Login Customer ID (optional)" value={loginCid} onChange={(e) => setLoginCid(e.target.value)} placeholder="manager account, digits only" />
+            <div className="row" style={{ alignItems: 'flex-end', gap: 8 }}>
+              <Button
+                variant="secondary" type="button"
+                disabled={!tokenStored || accountsM.isPending}
+                onClick={() => accountsM.mutate(businessId)}
+              >
+                {accountsM.isPending ? 'Loading…' : 'Load accounts'}
+              </Button>
+              <span className="subtle">Pick a client account under your manager — metrics can't be pulled from the manager itself.</span>
+            </div>
+            {accountsM.isSuccess && accountsM.data.length > 0 && (
+              <SelectField
+                label="Client account"
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                options={accountsM.data.map((a) => ({
+                  value: a.id,
+                  label: `${a.name || a.id} · ${a.id}${a.manager ? ' (manager — no metrics)' : ''}`,
+                }))}
+              />
+            )}
+            {accountsM.isSuccess && accountsM.data.length === 0 && (
+              <Notice tone="issue">No accounts found under this manager.</Notice>
+            )}
+            {accountsM.isError && <Notice tone="issue">{accountsM.error.message}</Notice>}
             <InputField label="OAuth Client Secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={i.has_client_secret ? '•••• saved — blank keeps it' : ''} />
             <InputField label="Developer Token" type="password" value={devToken} onChange={(e) => setDevToken(e.target.value)} placeholder={i.has_developer_token ? '•••• saved — blank keeps it' : ''} />
             <span className="subtle">Each business uses its own Google Cloud OAuth client + Ads developer token. Customer id + refresh token are this account's.</span>

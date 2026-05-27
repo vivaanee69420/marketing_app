@@ -53,7 +53,7 @@ functional reference — read it for behavior, don't copy its stack).
 
 ## Reference APIs (live in v1)
 - Meta Graph **v20.0** `/act_<id>/insights` (level=ad, time_increment=1).
-- Google Ads **v17** `googleAds:searchStream` GAQL (`ad_group_ad`,
+- Google Ads **v24** `googleAds:searchStream` GAQL (`ad_group_ad`,
   `LAST_30_DAYS`, `cost_micros`/1e6).
 - Anthropic Messages API — JSON-only system prompt for report shape:
   `{summary, wins, losses, issues, opportunities, creativeIdeas, adCopyIdeas, nextActions}`.

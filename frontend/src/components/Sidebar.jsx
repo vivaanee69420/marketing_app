@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import Icon from './Icon.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 // 10 nav links, in docs/SECTIONS.md order.
 const NAV = [
@@ -16,6 +17,7 @@ const NAV = [
 ];
 
 export default function Sidebar() {
+  const { user, logout } = useAuth();
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -43,8 +45,17 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <strong>Marketing Command Centre</strong>
-        <p>Spend, revenue, ROI, AI reports and tasks across every business — in one calm place.</p>
+        <div className="account-row">
+          <div>
+            <div className="subtle" style={{ color: 'rgba(236,230,221,0.75)' }}>Signed in as</div>
+            <strong style={{ fontSize: 13, color: '#f2e6bf' }}>
+              {user?.username || user?.email || '—'}
+            </strong>
+          </div>
+          <button type="button" className="btn" onClick={logout}>
+            <Icon name="LogOut" size={16} /> Sign out
+          </button>
+        </div>
       </div>
     </aside>
   );

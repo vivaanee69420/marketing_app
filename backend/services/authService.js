@@ -1,39 +1,84 @@
 import { supabaseAuth, supabaseAdmin, hasServiceRole } from "../config/supabase.js";
+import { normalizeUsername } from "../utils/authValidation.js";
+import * as authRepo from "../repositories/authRepository.js";
+
+// New signups join this org (single-org phase). A real "create your own org"
+// flow replaces this later. Must match a seeded organizations.id (uuid).
+const DEFAULT_ORG_ID =
+  process.env.DEFAULT_ORG_ID ||
+  process.env.APP_ORG_ID ||
+  "00000000-0000-0000-0000-000000000000";
+
+const httpError = (message, status) => Object.assign(new Error(message), { status });
 
 /**
- * Create a user via the admin API (auto-confirmed, no email step), then sign in
- * to return a session. Requires SUPABASE_SERVICE_ROLE_KEY.
+ * Signup = username + email + password.
+ *
+ *   Zod (controller) → username free? → Supabase createUser (bcrypt+salt) →
+ *   provision profile + membership (txn) → sign in → session
+ *
+ * Password hashing/salting is handled by Supabase Auth (GoTrue, bcrypt) — we
+ * never see or store the password. If provisioning fails after the Supabase
+ * user exists, we delete that user so a retry is clean (no orphaned auth row).
  */
-export async function signUp({ email, password, name }) {
+export async function signUp({ username, email, password }) {
   if (!hasServiceRole) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set — signup is disabled");
+    throw httpError("SUPABASE_SERVICE_ROLE_KEY is not set — signup is disabled", 500);
+  }
+
+  const uname = normalizeUsername(username);
+
+  // Fast pre-check for a friendly error; the DB unique index is the real guard
+  // against the race between check and insert.
+  if (await authRepo.usernameExists(uname)) {
+    throw httpError("username_taken", 409);
   }
 
   const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    user_metadata: name ? { name } : {},
+    user_metadata: { username: uname },
   });
   if (createErr) {
-    const conflict = /already.*registered|exists/i.test(createErr.message);
-    const e = new Error(createErr.message);
-    e.status = conflict ? 409 : 400;
-    throw e;
+    const conflict = /already.*registered|exists|duplicate/i.test(createErr.message);
+    throw httpError(conflict ? "email_taken" : createErr.message, conflict ? 409 : 400);
   }
 
-  const session = await signIn({ email, password });
+  const userId = created.user.id;
+  try {
+    await authRepo.provisionUser({ userId, username: uname, email, orgId: DEFAULT_ORG_ID });
+  } catch (err) {
+    // Roll back the Supabase user so the username/email can be reused on retry.
+    await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+    if (err.code === "23505") throw httpError("username_taken", 409); // lost the race
+    throw err;
+  }
+
+  const session = await signIn({ username: uname, password });
   return { user: created.user, ...session };
 }
 
-/** Email/password sign-in. Returns the user + tokens. */
-export async function signIn({ email, password }) {
-  const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
-  if (error || !data?.session) {
-    const e = new Error(error?.message || "invalid_credentials");
-    e.status = 401;
-    throw e;
+/**
+ * Login = username + password. Resolve the email from profiles, then let
+ * Supabase verify the password. Same 401 for "no such username" and "wrong
+ * password" so we don't leak which usernames exist.
+ */
+export async function signIn({ username, password }) {
+  const uname = normalizeUsername(username);
+  const profile = await authRepo.findLoginByUsername(uname);
+  if (!profile) {
+    throw httpError("invalid_credentials", 401);
   }
+
+  const { data, error } = await supabaseAuth.auth.signInWithPassword({
+    email: profile.email,
+    password,
+  });
+  if (error || !data?.session) {
+    throw httpError("invalid_credentials", 401);
+  }
+
   return {
     user: data.user,
     access_token: data.session.access_token,

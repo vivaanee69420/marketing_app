@@ -1,7 +1,17 @@
 /* ==========================================================================
    Marketing ROI Command Center — Design System
    Ported from docs/DESIGN.md. Plain CSS + CSS variables. NO Tailwind, NO kit.
+   Tailwind v4: utilities only (NO preflight) so the Overview test.html port can
+   use utility classes without resetting the other plain-CSS pages. Existing
+   styles live in the `app` layer, below `utilities`, so Tailwind wins only where
+   a Tailwind class is actually used.
    ========================================================================== */
+
+@layer theme, app, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@layer app {
 
 :root {
   /* Surfaces */
@@ -249,6 +259,17 @@ ul { margin: 0; }
   outline: none; border-color: var(--blue);
 }
 
+.field-reveal { position: relative; display: block; }
+.field-reveal input { padding-right: 42px; }
+.field-reveal-btn {
+  position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted, #8a8a8a); cursor: pointer;
+}
+.field-reveal-btn:hover { color: var(--heading); background: var(--line); }
+.field-reveal-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
 .filter-select {
   height: 36px; border-radius: 14px; padding: 0 14px; min-width: 180px;
   border: 1px solid var(--line); background: var(--panel); color: var(--heading);
@@ -342,3 +363,55 @@ tbody tr:last-child td { border-bottom: none; }
   .review-row { flex-direction: column; }
   .hero { grid-template-columns: 1fr; }
 }
+
+/* --------------------------------------------------------------------------
+   Auth (login / signup)
+   -------------------------------------------------------------------------- */
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  display: grid;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px 28px;
+  box-shadow: var(--shadow-tab, 0 8px 30px rgba(0, 0, 0, 0.06));
+}
+.auth-card h1 { font-size: 22px; }
+.auth-card .brand-mark { margin-bottom: 4px; }
+.auth-card .subtle { margin-top: -8px; }
+.auth-submit { margin-top: 4px; justify-content: center; }
+.auth-switch { text-align: center; margin-top: 2px; }
+.auth-switch a { color: var(--gold, #b08948); font-weight: 600; text-decoration: none; }
+.auth-switch a:hover { text-decoration: underline; }
+.field-error { color: var(--danger, #b4453a); font-size: 12px; margin-top: -8px; }
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* --------------------------------------------------------------------------
+   Overview (test.html port) — minimal preflight-style reset, scoped so the
+   other plain-CSS pages stay untouched. Tailwind utilities (higher layer) win
+   over these, so any element with a Tailwind class keeps its intended look;
+   bare <button>/<select> just lose the native UA chrome.
+   -------------------------------------------------------------------------- */
+.gm-dashboard button {
+  font: inherit; color: inherit; background: transparent;
+  border: 0; margin: 0; padding: 0; cursor: pointer;
+}
+.gm-dashboard select { font: inherit; }
+.gm-dashboard table { border-collapse: collapse; }
+
+} /* end @layer app */

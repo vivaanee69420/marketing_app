@@ -23,10 +23,37 @@ export async function byBusiness(_req, res, next) {
   }
 }
 
+export async function campaigns(_req, res, next) {
+  try {
+    const campaigns = await withOrg((tx) => repo.campaigns(tx));
+    res.json({ campaigns });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function trend(_req, res, next) {
   try {
     const points = await withOrg((tx) => repo.trend(tx, { months: 6 }));
     res.json({ trend: points });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function hero(_req, res, next) {
+  try {
+    const data = await withOrg((tx) => repo.hero(tx));
+    res.json({ hero: data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function jobHealth(_req, res, next) {
+  try {
+    const jobs = await withOrg((tx) => repo.jobHealth(tx));
+    res.json({ jobs });
   } catch (err) {
     next(err);
   }

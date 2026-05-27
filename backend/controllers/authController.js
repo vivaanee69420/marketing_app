@@ -1,22 +1,21 @@
-import { z } from "zod";
+import { signupSchema, loginSchema } from "../utils/authValidation.js";
+import { setSession, clearSession } from "../utils/sessionCookies.js";
 import * as authService from "../services/authService.js";
 
-const signupSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8, "password must be at least 8 characters"),
-  name: z.string().min(1).max(120).optional(),
-});
-
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+// Shape the user we return to the client — never tokens (those live in the
+// httpOnly cookie) and never password material.
+const publicUser = (user) => ({
+  id: user.id,
+  email: user.email,
+  username: user.user_metadata?.username ?? null,
 });
 
 export async function signup(req, res, next) {
   try {
     const input = signupSchema.parse(req.body);
-    const result = await authService.signUp(input);
-    res.status(201).json(result);
+    const { user, ...session } = await authService.signUp(input);
+    setSession(res, session);
+    res.status(201).json({ user: publicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -25,20 +24,20 @@ export async function signup(req, res, next) {
 export async function login(req, res, next) {
   try {
     const input = loginSchema.parse(req.body);
-    const result = await authService.signIn(input);
-    res.json(result);
+    const { user, ...session } = await authService.signIn(input);
+    setSession(res, session);
+    res.json({ user: publicUser(user) });
   } catch (err) {
     next(err);
   }
 }
 
-// Stateless JWT — logout is client-side (discard the token). Endpoint exists
-// for symmetry and future refresh-token revocation.
-export async function logout(_req, res) {
+// Token lives in an httpOnly cookie, so logout must clear it server-side.
+export function logout(_req, res) {
+  clearSession(res);
   res.json({ ok: true });
 }
 
-export async function me(req, res) {
-  const { id, email, user_metadata } = req.user;
-  res.json({ id, email, name: user_metadata?.name ?? null });
+export function me(req, res) {
+  res.json({ user: publicUser(req.user) });
 }

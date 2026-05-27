@@ -1,14 +1,15 @@
 import { supabaseAuth } from "../config/supabase.js";
+import { orgContext } from "../config/db.js";
+import { readAccessToken } from "../utils/sessionCookies.js";
+import { firstOrgForUser } from "../repositories/authRepository.js";
 
 /**
- * Validate the Supabase JWT server-side. Frontend never talks to Supabase —
- * it sends `Authorization: Bearer <access_token>` to this API, and we ask
- * Supabase to resolve the user. Sets req.user on success, 401 otherwise.
+ * Validate the Supabase JWT server-side. The frontend never talks to Supabase —
+ * the token rides in an httpOnly cookie (or a Bearer header for tooling), and we
+ * ask Supabase to resolve the user. Sets req.user on success, 401 otherwise.
  */
 export async function requireAuth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-
+  const token = readAccessToken(req);
   if (!token) {
     return res.status(401).json({ error: "missing_token" });
   }
@@ -23,5 +24,24 @@ export async function requireAuth(req, res, next) {
     next();
   } catch (err) {
     return res.status(401).json({ error: "auth_failed", message: err.message });
+  }
+}
+
+/**
+ * Resolve the tenant from the authenticated user's membership (first org for
+ * now) and run the rest of the request inside orgContext, so every downstream
+ * withOrg((tx) => ...) call is scoped to this org without passing an id. 403 if
+ * the user belongs to no org. MUST run after requireAuth.
+ */
+export async function requireOrg(req, res, next) {
+  try {
+    const orgId = await firstOrgForUser(req.user.id);
+    if (!orgId) {
+      return res.status(403).json({ error: "no_org_membership" });
+    }
+    req.orgId = orgId;
+    orgContext.run({ orgId, userId: req.user.id }, () => next());
+  } catch (err) {
+    next(err);
   }
 }

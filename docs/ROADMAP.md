@@ -54,7 +54,7 @@ marketing_app/
 
 ## M4 — Integrations (Meta + Google live)
 - OAuth start/callback for both providers; encrypt tokens at rest.
-- Provider fetchers (Meta Graph v20.0 insights, Google Ads v17 searchStream).
+- Provider fetchers (Meta Graph v20.0 insights, Google Ads v24 searchStream).
 - Sync engine: upsert campaign→adset→ad tree, write daily_metrics, re-match
   conversions, per-business/provider fault isolation, sync_runs + issues.
 - Settings → Integrations card; Setup + Audit pages.

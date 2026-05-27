@@ -1,5 +1,6 @@
 import pg from "pg";
 import dotenv from "dotenv";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 dotenv.config();
 
@@ -20,11 +21,23 @@ pool.on("error", (err) => {
   console.error("[db] unexpected idle client error:", err.message);
 });
 
-// Auth deferred: fixed tenant for now. Swap for the org resolved from the
-// Supabase JWT + memberships later. Must be a uuid (org_id columns are uuid);
-// seed an organization with this id. Override via APP_ORG_ID.
+// Fallback tenant for non-request work (cron, scripts) where no authenticated
+// user resolved an org. Must be a uuid (org_id columns are uuid). Override via
+// APP_ORG_ID. Request handlers get their org from the auth middleware instead,
+// carried through orgContext (below) — see middleware/authMiddleware.js.
 const APP_ORG_ID =
   process.env.APP_ORG_ID || "00000000-0000-0000-0000-000000000000";
+
+// Per-request tenant context. requireOrg resolves the org from the user's
+// membership and runs the rest of the request inside orgContext.run({orgId}).
+// withOrg then reads it — so every existing `withOrg((tx) => ...)` call site
+// (businesses, integrations, metrics, sync) becomes org-scoped with no change.
+//
+//   request → requireAuth → requireOrg → orgContext.run({orgId}, next)
+//                                              │
+//                          controller → withOrg((tx) => repo...) ── reads orgId
+//
+export const orgContext = new AsyncLocalStorage();
 
 /**
  * Simple parameterized query against the pool. Use for non-tenant or admin
@@ -39,11 +52,18 @@ export function query(text, params) {
  * Uses set_config(..., true) = transaction-local (like SET LOCAL but
  * parameterizable, so injection-safe). Every tenant query goes through here.
  *
+ * orgId precedence: explicit arg → orgContext store (set by requireOrg) →
+ * APP_ORG_ID fallback (cron/scripts). This is why request handlers don't pass
+ * an orgId: the authenticated org rides in via orgContext.
+ *
  * Note: RLS only enforces if DATABASE_URL uses a role subject to RLS. The
- * Supabase `postgres` role bypasses RLS — fine for the single-org slice, but
- * revisit when multi-tenant auth lands.
+ * Supabase `postgres` role bypasses RLS — so isolation is NOT yet enforced at
+ * the DB layer until the non-superuser app role lands (see
+ * db/migrations/0001_auth_hardening.sql, applied at the end). Until then,
+ * set_config still scopes any query that filters on app.current_org, but a
+ * query without an org_id predicate would see all orgs under the superuser role.
  */
-export async function withOrg(fn, orgId = APP_ORG_ID) {
+export async function withOrg(fn, orgId = orgContext.getStore()?.orgId ?? APP_ORG_ID) {
   const client = await pool.connect();
   try {
     await client.query("begin");

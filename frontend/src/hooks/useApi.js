@@ -31,6 +31,13 @@ export function useMetricsByBusiness() {
   });
 }
 
+export function useCampaigns() {
+  return useQuery({
+    queryKey: ['metrics', 'campaigns'],
+    queryFn: () => api.get('/api/metrics/campaigns').then((d) => d.campaigns),
+  });
+}
+
 export function useTrend() {
   return useQuery({
     queryKey: ['metrics', 'trend'],
@@ -58,6 +65,15 @@ export function useSaveIntegration() {
   return useMutation({
     mutationFn: (payload) => api.put('/api/integrations', payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['integrations'] }),
+  });
+}
+
+// Lazy: fetched on demand (button) so we don't hit the Google Ads API on every
+// Settings render. Returns the client accounts under the business's manager.
+export function useGoogleAccounts() {
+  return useMutation({
+    mutationFn: (businessId) =>
+      api.get(`/api/integrations/google/accounts?business_id=${businessId}`).then((d) => d.accounts),
   });
 }
 

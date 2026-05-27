@@ -6,6 +6,18 @@ const schema = z.object({
   provider: z.enum(["meta", "google"]).optional(),
 });
 
+/**
+ * HTTP status for a sync run. Skipped (not-connected) providers don't count —
+ * 502 only when every provider we actually attempted failed. So a lone
+ * connected Google still 502s on its own failure, but an unconnected Meta
+ * never forces a 502 on its own.
+ */
+export function decideSyncStatus(results) {
+  const attempted = results.filter((r) => r.status !== "skipped");
+  const allErr = attempted.length > 0 && attempted.every((r) => r.status === "error");
+  return allErr ? 502 : 200;
+}
+
 export async function run(req, res, next) {
   try {
     const { business_id, provider } = schema.parse(req.body);
@@ -13,9 +25,7 @@ export async function run(req, res, next) {
       ? [await syncService.syncOne(business_id, provider)]
       : await syncService.syncBusiness(business_id);
 
-    // 502 only if every attempted provider failed; otherwise 200 with per-provider status.
-    const allErr = results.length > 0 && results.every((r) => r.status === "error");
-    res.status(allErr ? 502 : 200).json({ results });
+    res.status(decideSyncStatus(results)).json({ results });
   } catch (err) {
     next(err);
   }

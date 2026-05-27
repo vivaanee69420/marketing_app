@@ -22,7 +22,7 @@ behavior is the functional reference.
 | AI | **Anthropic Claude** (`@anthropic-ai/sdk`) | Default `claude-sonnet-4-6`; heuristic fallback |
 | Email | **Resend** | Morning digest |
 | Validation | **Zod** | Every API input validated (m1 had none — fix) |
-| Ad APIs | Meta Graph `v20.0`, Google Ads `v17` | Live OAuth + sync |
+| Ad APIs | Meta Graph `v20.0`, Google Ads `v24` | Live OAuth + sync |
 | Deploy | Frontend: static host (Vercel/Netlify/Cloudflare). Backend: Node host (Railway/Render/Fly). DB: Supabase. | |
 | Runtime | Node 20+ | |
 
@@ -49,7 +49,7 @@ typed query helper (`db.query<T>(sql, params)`), parameterized always.
                                          │  RLS by org_id        │
                                          └──────────────────────┘
         External (server-to-server, from API/cron worker):
-        Meta Graph v20.0 · Google Ads v17 · Anthropic · Resend
+        Meta Graph v20.0 · Google Ads v24 · Anthropic · Resend
 ```
 
 - **Frontend** never holds third-party secrets. It calls the API; the API holds
@@ -205,7 +205,7 @@ Zod-validated.
 
 ### 6.2 Providers
 - **Meta** — `GET graph.facebook.com/v20.0/act_<id>/insights?level=ad&time_increment=1&fields=campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,clicks,impressions,date_start`. Normalize to `{campaignExternalId,campaignName,adSetExternalId,adSetName,adExternalId,adName,spend,clicks,impressions,date}`.
-- **Google Ads** — `POST googleads.googleapis.com/v17/customers/<id>/googleAds:searchStream` with GAQL selecting campaign/ad_group/ad_group_ad + `metrics.cost_micros,clicks,impressions,segments.date FROM ad_group_ad WHERE segments.date DURING LAST_30_DAYS`. Headers: `Authorization: Bearer`, `developer-token`, optional `login-customer-id`. `spend = cost_micros / 1_000_000`.
+- **Google Ads** — `POST googleads.googleapis.com/v24/customers/<id>/googleAds:searchStream` with GAQL selecting campaign/ad_group/ad_group_ad + `metrics.cost_micros,clicks,impressions,segments.date FROM ad_group_ad WHERE segments.date DURING LAST_30_DAYS`. Headers: `Authorization: Bearer`, `developer-token`, optional `login-customer-id`. `spend = cost_micros / 1_000_000`.
 
 ### 6.3 Attribution (`rematchConversion`)
 Cascade, highest confidence wins:

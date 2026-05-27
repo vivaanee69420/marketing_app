@@ -43,13 +43,18 @@ export async function syncOne(businessId, provider, windowOverride) {
 
   return withOrg(async (tx) => {
     const integration = await integrations.getByBusinessProvider(tx, businessId, provider);
+    const tokenCol = integration && (provider === "meta" ? integration.access_token_enc : integration.refresh_token_enc);
+
+    // Not connected is not a failure: skip without starting a run, raising an
+    // issue, or marking the integration errored. Each provider connects on its
+    // own — an absent Meta must not drag a working Google sync into an error.
+    if (!integration || !tokenCol) {
+      return { businessId, provider, status: "skipped", reason: "not connected", window };
+    }
+
     const runId = await sync.startSyncRun(tx, { businessId, provider, syncType: "manual" });
 
     try {
-      if (!integration) throw new Error(`${provider} is not connected for this business`);
-      const tokenCol = provider === "meta" ? integration.access_token_enc : integration.refresh_token_enc;
-      if (!tokenCol) throw new Error(`${provider} credentials missing`);
-
       const rows = await callProvider(provider, integration, window);
 
       // Resolve external→internal ids once per entity.
