@@ -770,7 +770,7 @@ With the DB env loaded (same `DATABASE_URL` the API uses), run:
 psql "$DATABASE_URL" -f db/migrate_2026-05-27_google_per_business.sql
 ```
 
-Expected: `UPDATE <n>` then `DROP TABLE`. Re-running prints `UPDATE 0` / `NOTICE: table "org_integration_settings" does not exist, skipping` — idempotent.
+Expected on first run: `DO` (the guarded block runs the UPDATE + DROP). The migration is wrapped in a `to_regclass`-guarded `DO` block, so re-running after the table is gone is a clean no-op (prints `DO`, no error) — idempotent.
 
 - [ ] **Step 3: Confirm creds landed on existing Google integrations**
 
