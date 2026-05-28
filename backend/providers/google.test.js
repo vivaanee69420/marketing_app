@@ -124,3 +124,29 @@ test("listClientAccounts throws a clear error when no manager id is provided", a
     /No login\/manager customer id/,
   );
 });
+
+// OAuth invalid_grant = refresh token revoked or expired. Must surface as
+// TOKEN_EXPIRED so the UI shows a Reconnect CTA instead of a generic error.
+test("fetchInsights tags invalid_grant from OAuth as TOKEN_EXPIRED", async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      return new Response(
+        JSON.stringify({ error: "invalid_grant", error_description: "Token has been expired or revoked." }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("[]", { status: 200 });
+  };
+  let caught = null;
+  try {
+    await fetchInsights({
+      refreshToken: "rt", customerId: "123",
+      clientId: "c", clientSecret: "s", developerToken: "d",
+      since: "2026-05-01", until: "2026-05-02",
+    });
+  } catch (e) { caught = e; } finally { globalThis.fetch = origFetch; }
+  assert.ok(caught, "expected throw");
+  assert.equal(caught.code, "TOKEN_EXPIRED");
+  assert.match(caught.message, /Google refresh token invalid/i);
+});

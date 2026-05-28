@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   PageHeader, Card, SoftCard, SectionHead, Notice, Pill, Button,
-  DataTable, InputField, TextAreaField, SelectField,
+  DataTable, InputField, TextAreaField, SelectField, SyncModal,
 } from '../components/index.js';
 import { currency } from '../lib/format.js';
 import * as mock from '../lib/mock.js';
 import {
-  useBusinesses, useIntegrations, useSaveIntegration, useSync, useGoogleAccounts,
+  useBusinesses, useIntegrations, useSaveIntegration, useStreamSync, useGoogleAccounts,
 } from '../hooks/useApi.js';
 
 // ── Morning automation ────────────────────────────────────────────────────────
@@ -137,15 +137,23 @@ function Schedule() {
 
 // ── Integrations ─────────────────────────────────────────────────────────────
 
-const STATUS_LABEL = { completed: 'Synced', error: 'Sync error', running: 'Syncing…' };
+const STATUS_LABEL = {
+  completed: 'Synced',
+  error: 'Sync error',
+  running: 'Syncing…',
+  token_expired: 'Reconnect required',
+};
 
 function statusPill(integration) {
   if (!integration) return <Pill tone="err">Not connected</Pill>;
-  const tone = integration.last_sync_status === 'error' ? 'warn' : 'ok';
-  return <Pill tone={tone}>{STATUS_LABEL[integration.last_sync_status] || 'Connected'}</Pill>;
+  const status = integration.last_sync_status;
+  let tone = 'ok';
+  if (status === 'error') tone = 'warn';
+  if (status === 'token_expired') tone = 'err';
+  return <Pill tone={tone}>{STATUS_LABEL[status] || 'Connected'}</Pill>;
 }
 
-function IntegrationBlock({ provider, businessId, integration }) {
+function IntegrationBlock({ provider, businessId, integration, onSync, syncing }) {
   const isMeta = provider === 'meta';
   const i = integration || {};
   const [accountName, setAccountName] = useState('');
@@ -190,6 +198,10 @@ function IntegrationBlock({ provider, businessId, integration }) {
   const canSubmit = !!businessId && !!accountId && (!!token || tokenStored)
     && (isMeta || (!!clientId && (i.has_client_secret || !!clientSecret) && (i.has_developer_token || !!devToken)));
 
+  const connected = !!integration && tokenStored;
+  const tokenExpired = integration?.last_sync_status === 'token_expired';
+  const canSync = !!businessId && connected && !syncing;
+
   return (
     <SoftCard>
       <form className="stack" onSubmit={submit}>
@@ -197,8 +209,26 @@ function IntegrationBlock({ provider, businessId, integration }) {
           <strong>{isMeta ? 'Meta' : 'Google'}</strong>
           {statusPill(integration)}
         </div>
+        {tokenExpired && (
+          <Notice tone="issue">
+            {isMeta
+              ? 'Meta access token has expired. Paste a fresh token below and click Save & connect, then sync again.'
+              : 'Google refresh token is revoked or expired. Re-issue and paste it below, then save and sync.'}
+          </Notice>
+        )}
         {integration?.last_sync_status === 'error' && integration.last_error && (
           <Notice tone="issue">{integration.last_error}</Notice>
+        )}
+        {connected && !tokenExpired && (
+          <div className="row">
+            <Button
+              variant="secondary" type="button"
+              disabled={!canSync}
+              onClick={() => onSync?.(provider)}
+            >
+              {syncing ? 'Syncing…' : `Sync ${isMeta ? 'Meta' : 'Google'}`}
+            </Button>
+          </div>
         )}
         <InputField label="Account Name" value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder={i.account_name || 'optional label'} />
         <InputField label={isMeta ? 'Ad Account ID (act_…)' : 'Customer ID'} value={accountId} onChange={(e) => setAccountId(e.target.value)} />
@@ -263,42 +293,93 @@ function IntegrationBlock({ provider, businessId, integration }) {
 function Integrations() {
   const businessesQ = useBusinesses();
   const integrationsQ = useIntegrations();
-  const sync = useSync();
+  const stream = useStreamSync();
+  // Empty default — user MUST pick. Prevents accidentally syncing the wrong
+  // business when many exist.
   const [businessId, setBusinessId] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
 
   const businesses = businessesQ.data || [];
-  const selected = businessId || businesses[0]?.id || '';
+  const selected = businessId;
   const byKey = new Map((integrationsQ.data || []).map((i) => [`${i.business_id}:${i.provider}`, i]));
+
+  // Auto-close the modal a moment after a clean success so the user isn't
+  // forced to click Close on the happy path. Errors and token_expired stay
+  // visible until the user dismisses them.
+  useEffect(() => {
+    if (!stream.isDone || stream.isError) return;
+    const anyFailed = stream.result?.results?.some((r) => r.status === 'error' || r.status === 'token_expired');
+    if (anyFailed) return;
+    const t = setTimeout(() => { setModalOpen(false); stream.reset(); }, 1200);
+    return () => clearTimeout(t);
+  }, [stream.isDone, stream.isError, stream.result, stream]);
+
+  function runSync(provider) {
+    if (!selected || stream.isRunning) return;
+    setModalOpen(true);
+    stream.start({ business_id: selected, provider }).catch(() => { /* state captured in hook */ });
+  }
+
+  function closeModal() {
+    if (stream.isRunning) return;
+    setModalOpen(false);
+    stream.reset();
+  }
 
   return (
     <Card>
       <SectionHead
         title="Integrations"
-        description="Connect Meta and Google Ads per business, then sync to pull spend."
-        actions={(
-          <Button variant="secondary" disabled={!selected || sync.isPending} onClick={() => sync.mutate({ business_id: selected })}>
-            {sync.isPending ? 'Syncing…' : 'Run sync'}
-          </Button>
-        )}
+        description="Connect Meta and Google Ads per business, then sync each provider on its own."
       />
       <div className="stack">
         <SelectField
           label="Business"
-          options={businesses.map((b) => ({ value: b.id, label: b.name }))}
+          options={[
+            { value: '', label: '— Select a business —' },
+            ...businesses.map((b) => ({ value: b.id, label: b.name })),
+          ]}
           value={selected}
           onChange={(e) => setBusinessId(e.target.value)}
         />
-        <div className="grid cols-2">
-          <IntegrationBlock key={`meta:${selected}`} provider="meta" businessId={selected} integration={byKey.get(`${selected}:meta`)} />
-          <IntegrationBlock key={`google:${selected}`} provider="google" businessId={selected} integration={byKey.get(`${selected}:google`)} />
-        </div>
-        {sync.isSuccess && (
-          <Notice tone={sync.data.results?.some((r) => r.status === 'completed') ? 'good' : 'issue'}>
-            {sync.data.results?.map((r) => `${r.provider}: ${r.status}${r.records != null ? ` (${r.records} rows)` : ''}${r.error ? ` — ${r.error}` : ''}`).join(' · ')}
-          </Notice>
+        {!selected && (
+          <Notice tone="warn">Pick a business above to view its Meta and Google connections.</Notice>
         )}
-        {sync.isError && <Notice tone="issue">{sync.error.message}</Notice>}
+        {selected && (
+          <div className="grid cols-2">
+            <IntegrationBlock
+              key={`meta:${selected}`}
+              provider="meta"
+              businessId={selected}
+              integration={byKey.get(`${selected}:meta`)}
+              onSync={runSync}
+              syncing={stream.isRunning && stream.provider === 'meta'}
+            />
+            <IntegrationBlock
+              key={`google:${selected}`}
+              provider="google"
+              businessId={selected}
+              integration={byKey.get(`${selected}:google`)}
+              onSync={runSync}
+              syncing={stream.isRunning && stream.provider === 'google'}
+            />
+          </div>
+        )}
       </div>
+      <SyncModal
+        open={modalOpen}
+        provider={stream.provider}
+        phase={stream.phase}
+        percent={stream.percent}
+        done={stream.done}
+        total={stream.total}
+        isRunning={stream.isRunning}
+        isDone={stream.isDone}
+        isError={stream.isError}
+        result={stream.result}
+        error={stream.error}
+        onClose={closeModal}
+      />
     </Card>
   );
 }

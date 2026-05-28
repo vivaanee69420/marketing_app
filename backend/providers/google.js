@@ -29,7 +29,16 @@ async function getAccessToken({ clientId, clientSecret, refreshToken }) {
     }).toString(),
   });
   if (!res.ok) {
-    const snippet = (await res.text()).slice(0, 300);
+    const rawBody = await res.text();
+    const snippet = rawBody.slice(0, 300);
+    // Detect revoked/expired refresh token.
+    let parsed = null;
+    try { parsed = JSON.parse(rawBody); } catch { /* not JSON */ }
+    if (parsed && parsed.error === 'invalid_grant') {
+      const e = new Error(`Google refresh token invalid: ${parsed.error_description || parsed.error}`);
+      e.code = 'TOKEN_EXPIRED';
+      throw e;
+    }
     throw new Error(`Google OAuth ${res.status}: ${snippet}`);
   }
   const { access_token: accessToken } = await res.json();

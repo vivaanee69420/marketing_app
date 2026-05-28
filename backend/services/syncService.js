@@ -28,42 +28,82 @@ function callProvider(provider, integration, window) {
       ...window,
     });
   }
-  // Google: BYO per business — creds come from integration.config_json.
   return fetchGoogle({ ...googleCallArgs(integration, decrypt), ...window });
 }
 
 /**
- * Sync one business+provider. Whole thing runs in a single transaction; provider
- * failures are caught INSIDE the txn so the sync_runs row + dashboard_issue
- * commit (rethrowing would roll them back). Returns a result object.
+ * Sync one business+provider.
+ *
+ * Why three transactions instead of one:
+ *   tx1 commits the sync_runs row so it survives a later crash (a janitor can
+ *   sweep stale "running" rows). tx2 is the atomic data swap (delete-window +
+ *   upserts + inserts) — if anything in tx2 throws (constraint violation,
+ *   type error, etc.), Postgres aborts that txn ONLY. tx3 then writes the
+ *   failure bookkeeping on a fresh client, so it can never hit the
+ *   "current transaction is aborted, commands ignored until end of
+ *   transaction block" footgun that the old single-txn version suffered.
+ *
+ * onProgress is invoked at phase boundaries with { phase, done, total, ... }
+ * so the SSE route can stream real progress to the client.
  */
-export async function syncOne(businessId, provider, windowOverride) {
+export async function syncOne(businessId, provider, windowOverride, onProgress = () => {}) {
   const window = windowOverride || defaultWindow();
   const issueKey = `sync:${provider}:${businessId}`;
 
-  return withOrg(async (tx) => {
-    const integration = await integrations.getByBusinessProvider(tx, businessId, provider);
-    const tokenCol = integration && (provider === "meta" ? integration.access_token_enc : integration.refresh_token_enc);
+  onProgress({ phase: "start", businessId, provider });
 
-    // Not connected is not a failure: skip without starting a run, raising an
-    // issue, or marking the integration errored. Each provider connects on its
-    // own — an absent Meta must not drag a working Google sync into an error.
-    if (!integration || !tokenCol) {
-      return { businessId, provider, status: "skipped", reason: "not connected", window };
-    }
+  // Resolve integration outside the data txn. Skip cleanly if not connected.
+  const integration = await withOrg(async (tx) =>
+    integrations.getByBusinessProvider(tx, businessId, provider)
+  );
+  const tokenCol = integration && (provider === "meta"
+    ? integration.access_token_enc
+    : integration.refresh_token_enc);
+  if (!integration || !tokenCol) {
+    onProgress({ phase: "skipped" });
+    return { businessId, provider, status: "skipped", reason: "not connected", window };
+  }
 
-    const runId = await sync.startSyncRun(tx, { businessId, provider, syncType: "manual" });
+  // Reject if a sync is already in flight for this business+provider. Stops
+  // a double-click (or curl + browser racing) from piling up parallel runs
+  // that exhaust the pg pool.
+  const busy = await withOrg(async (tx) =>
+    sync.hasRunningSync(tx, { businessId, provider }),
+  );
+  if (busy) {
+    onProgress({ phase: "skipped", reason: "already running" });
+    return { businessId, provider, status: "skipped", reason: "already running", window };
+  }
 
-    try {
-      const rows = await callProvider(provider, integration, window);
+  // tx1: open sync_runs (status=running). Commits independently.
+  const runId = await withOrg(async (tx) =>
+    sync.startSyncRun(tx, { businessId, provider, syncType: "manual" })
+  );
 
-      // Resolve external→internal ids once per entity.
+  let rows = null;
+  let dataErr = null;
+  try {
+    onProgress({ phase: "fetching" });
+    rows = await callProvider(provider, integration, window);
+    onProgress({ phase: "fetched", total: rows.length });
+
+    // tx2: atomic data swap. If anything throws, rollback wipes the
+    // partial state and the error is handed to tx3 below.
+    //
+    // Strategy: upserts stay one-row-at-a-time (small N after dedup — usually
+    // a few hundred), but daily_metrics goes via a single bulk INSERT. Going
+    // row-by-row over the Supabase pooler measured at ~5 rows/sec; one batched
+    // INSERT for 1248 rows lands in well under a second.
+    await withOrg(async (tx) => {
       const campaignIds = new Map();
       const adSetIds = new Map();
       const adIds = new Map();
+      const metrics = [];
 
       await sync.deleteMetricsWindow(tx, { businessId, provider, ...window });
 
+      const total = rows.length;
+      let resolved = 0;
       for (const r of rows) {
         let campaignId = null, adSetId = null, adId = null;
 
@@ -89,39 +129,79 @@ export async function syncOne(businessId, provider, windowOverride) {
           adId = adIds.get(r.ad.externalId);
         }
 
-        await sync.insertDailyMetric(tx, {
+        metrics.push({
           businessId, provider, campaignId, adSetId, adId,
           date: r.date, spend: r.spend, clicks: r.clicks,
           impressions: r.impressions, conversions: r.conversions,
         });
+
+        resolved += 1;
+        // Resolve phase progress: 1st, every 25 rows, last. This is the part
+        // that takes real time (per-row upsert round-trips). Phase 'writing'
+        // is reused so the frontend bar mapping doesn't need a new band.
+        if (resolved === 1 || resolved === total || resolved % 25 === 0) {
+          onProgress({ phase: "writing", done: resolved, total });
+        }
       }
 
-      await sync.finishSyncRun(tx, { id: runId, status: "completed", recordsSynced: rows.length });
-      await integrations.markSync(tx, { businessId, provider, status: "completed" });
-      await sync.resolveIssue(tx, { key: issueKey });
+      // Bulk write. One emit before and after.
+      onProgress({ phase: "writing", done: total, total });
+      await sync.insertDailyMetricsBatch(tx, metrics);
+    });
+  } catch (err) {
+    dataErr = err;
+  }
 
-      return { businessId, provider, status: "completed", records: rows.length, window };
-    } catch (err) {
-      // Fail loud, not silent: record the failure (commits with the txn).
-      await sync.finishSyncRun(tx, { id: runId, status: "error", error: err.message });
-      await integrations.markSync(tx, { businessId, provider, status: "error", error: err.message });
+  // tx3: bookkeeping. Always commits on a fresh client.
+  onProgress({ phase: "finalizing" });
+  const finalStatus = dataErr
+    ? (dataErr.code === "TOKEN_EXPIRED" ? "token_expired" : "error")
+    : "completed";
+
+  await withOrg(async (tx) => {
+    await sync.finishSyncRun(tx, {
+      id: runId,
+      status: dataErr ? "error" : "completed",
+      recordsSynced: rows ? rows.length : 0,
+      error: dataErr ? dataErr.message : null,
+    });
+    await integrations.markSync(tx, {
+      businessId, provider, status: finalStatus, error: dataErr ? dataErr.message : null,
+    });
+    if (dataErr) {
       await sync.raiseIssue(tx, {
-        key: issueKey, scope: `business:${businessId}`, severity: "error",
-        title: `${provider} sync failed`, message: err.message,
+        key: issueKey, scope: `business:${businessId}`,
+        severity: finalStatus === "token_expired" ? "warning" : "error",
+        title: finalStatus === "token_expired"
+          ? `${provider} reconnect required`
+          : `${provider} sync failed`,
+        message: dataErr.message,
       });
-      return { businessId, provider, status: "error", error: err.message, window };
+    } else {
+      await sync.resolveIssue(tx, { key: issueKey });
     }
   });
+
+  if (dataErr) {
+    onProgress({ phase: "error", error: dataErr.message, code: dataErr.code || null });
+    return {
+      businessId, provider, status: finalStatus,
+      error: dataErr.message, code: dataErr.code || null, window,
+    };
+  }
+  onProgress({ phase: "done", total: rows.length });
+  return { businessId, provider, status: "completed", records: rows.length, window };
 }
 
 /** Sync a business across providers, isolating per-provider faults. */
-export async function syncBusiness(businessId, providers = PROVIDERS) {
+export async function syncBusiness(businessId, providers = PROVIDERS, onProgress = () => {}) {
   const results = [];
   for (const p of providers) {
     try {
-      results.push(await syncOne(businessId, p));
+      results.push(await syncOne(businessId, p, undefined, onProgress));
     } catch (err) {
       // withOrg itself failed (e.g. DB) — still don't block the other provider.
+      onProgress({ phase: "error", provider: p, error: err.message });
       results.push({ businessId, provider: p, status: "error", error: err.message });
     }
   }

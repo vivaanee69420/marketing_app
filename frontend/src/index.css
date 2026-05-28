@@ -414,4 +414,49 @@ tbody tr:last-child td { border-bottom: none; }
 .gm-dashboard select { font: inherit; }
 .gm-dashboard table { border-collapse: collapse; }
 
+/* --------------------------------------------------------------------------
+   Sync modal — blocking overlay + progress bar
+   -------------------------------------------------------------------------- */
+.sync-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(34, 28, 18, 0.45);
+  display: grid; place-items: center;
+  z-index: 1000;
+  padding: 24px;
+}
+.sync-modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  width: min(480px, 100%);
+  padding: 24px;
+}
+.sync-modal h3 { font-size: 16px; margin-bottom: 6px; }
+.progress-track {
+  margin-top: 14px;
+  height: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--gold);
+  width: 0%;
+  transition: width 220ms ease-out;
+  border-radius: 999px;
+}
+.progress-fill.is-error { background: var(--danger); }
+.progress-fill.is-done  { background: var(--success); }
+.progress-meta {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 8px; font-size: 12px; color: var(--muted);
+}
+.notice.issue {
+  background: var(--danger-soft); border: 1px solid var(--danger-border);
+  color: var(--danger); padding: 8px 12px; border-radius: 10px; font-size: 12.5px;
+}
+
 } /* end @layer app */

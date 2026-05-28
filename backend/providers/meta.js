@@ -119,6 +119,15 @@ export async function fetchInsights({ accessToken, accountId, since, until }) {
       // Read body text for context, truncate to ~300 chars for the error message
       const bodyText = await res.text();
       const bodySnippet = bodyText.slice(0, 300);
+      // Try to parse JSON body to detect expired-session (code 190).
+      let parsed = null;
+      try { parsed = JSON.parse(bodyText); } catch { /* not JSON */ }
+      const metaErr = parsed && parsed.error;
+      if (metaErr && metaErr.code === 190) {
+        const e = new Error(`Meta token expired: ${metaErr.message}`);
+        e.code = 'TOKEN_EXPIRED';
+        throw e;
+      }
       throw new Error(`Meta API ${res.status}: ${bodySnippet}`);
     }
 
@@ -126,6 +135,11 @@ export async function fetchInsights({ accessToken, accountId, since, until }) {
 
     // Guard against API-level errors returned with HTTP 200
     if (json.error) {
+      if (json.error.code === 190) {
+        const e = new Error(`Meta token expired: ${json.error.message}`);
+        e.code = 'TOKEN_EXPIRED';
+        throw e;
+      }
       throw new Error(`Meta API error: ${json.error.message}`);
     }
 

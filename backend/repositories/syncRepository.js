@@ -62,6 +62,65 @@ export async function insertDailyMetric(tx, m) {
   );
 }
 
+/**
+ * Bulk variant — collapses N round-trips into one. Critical for Supabase
+ * pooler latency: a single sync used to be 1248 separate INSERTs over the
+ * pooled connection (~5 inserts/sec → 6+ minutes per business). This sends
+ * one statement with a multi-row VALUES list. Pg parameter limit is 65535;
+ * with 11 placeholders per row that's ~5950 rows per batch — we chunk at
+ * 1000 to stay well clear and keep statement size reasonable.
+ *
+ * Returns the number of rows inserted.
+ */
+export async function insertDailyMetricsBatch(tx, metrics) {
+  if (!Array.isArray(metrics) || metrics.length === 0) return 0;
+  const CHUNK = 1000;
+  let inserted = 0;
+  for (let start = 0; start < metrics.length; start += CHUNK) {
+    const slice = metrics.slice(start, start + CHUNK);
+    const values = [];
+    const params = [];
+    for (let i = 0; i < slice.length; i++) {
+      const m = slice[i];
+      const base = i * 11;
+      values.push(
+        `(${ORG}, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
+        `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, ` +
+        `$${base + 10}, $${base + 11})`
+      );
+      params.push(
+        m.businessId, m.provider, m.campaignId, m.adSetId, m.adId, m.date,
+        m.currency || "GBP", m.spend, m.clicks, m.impressions, m.conversions
+      );
+    }
+    await tx.query(
+      `insert into daily_metrics
+         (org_id, business_id, provider, campaign_id, ad_set_id, ad_id,
+          metric_date, currency, spend, clicks, impressions, conversions)
+       values ${values.join(", ")}`,
+      params,
+    );
+    inserted += slice.length;
+  }
+  return inserted;
+}
+
+/**
+ * Check if a sync is already in flight for this business+provider. Used as a
+ * lightweight concurrency guard so a double-click on the Sync button doesn't
+ * spawn parallel runs that fight for pool connections.
+ */
+export async function hasRunningSync(tx, { businessId, provider, maxAgeMin = 15 }) {
+  const { rows } = await tx.query(
+    `select id from sync_runs
+      where business_id = $1 and provider = $2 and status = 'running'
+        and started_at > now() - ($3 || ' minutes')::interval
+      limit 1`,
+    [businessId, provider, String(maxAgeMin)],
+  );
+  return rows.length > 0;
+}
+
 export async function startSyncRun(tx, { businessId, provider, syncType }) {
   const { rows } = await tx.query(
     `insert into sync_runs (org_id, business_id, provider, sync_type, status)

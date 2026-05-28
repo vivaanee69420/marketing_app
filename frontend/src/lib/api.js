@@ -73,6 +73,71 @@ export const api = {
   put: (path, body) => request(path, { method: 'PUT', body }),
 };
 
+/**
+ * Stream sync progress via Server-Sent Events. POST body carries the payload
+ * (EventSource is GET-only, so this uses fetch + ReadableStream and parses SSE
+ * frames manually). Calls onEvent({ type, data }) for each event; resolves with
+ * the final `result` event payload, rejects on `error`.
+ *
+ *   type: 'progress' | 'result' | 'error'
+ *   data: parsed JSON from the SSE data: line
+ */
+export async function streamSync(payload, onEvent) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+  const res = await fetch(`${BASE}/api/sync/stream`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let finalResult = null;
+  let errorPayload = null;
+
+  // Frames are separated by a blank line per the SSE spec.
+  // Each frame has `event:` and `data:` lines.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      if (!frame.trim() || frame.startsWith(':')) continue; // heartbeat / comment
+
+      let event = 'message';
+      let dataLine = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+      }
+      let data = null;
+      try { data = dataLine ? JSON.parse(dataLine) : null; } catch { /* ignore parse */ }
+      onEvent?.({ type: event, data });
+      if (event === 'result') finalResult = data;
+      if (event === 'error') errorPayload = data;
+    }
+  }
+
+  if (errorPayload) {
+    const err = new Error(errorPayload.message || 'sync stream error');
+    err.data = errorPayload;
+    throw err;
+  }
+  return finalResult || { results: [] };
+}
+
 // Auth endpoints. Tokens live in the httpOnly cookie, so these return the user
 // only. `me` is used on boot to learn whether a session cookie is still valid.
 export const authApi = {

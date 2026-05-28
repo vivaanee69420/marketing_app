@@ -115,7 +115,7 @@ create table daily_metrics (
   spend       numeric(12,2) not null default 0,
   clicks      integer not null default 0,
   impressions integer not null default 0,
-  conversions integer not null default 0,
+  conversions numeric(12,2) not null default 0,
   created_at  timestamptz not null default now()
 );
 create index on daily_metrics (org_id, business_id, metric_date);

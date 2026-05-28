@@ -28,3 +28,16 @@ test("one of two connected fails, other completes: 200", () => {
 test("empty results: 200", () => {
   assert.equal(decideSyncStatus([]), 200);
 });
+
+// token_expired is a failure, same as error, for the 502 decision.
+test("token_expired counts as failure when computing 502", () => {
+  assert.equal(decideSyncStatus([meta("token_expired"), google("error")]), 502);
+});
+
+test("token_expired alongside a success → 200", () => {
+  assert.equal(decideSyncStatus([meta("token_expired"), google("completed")]), 200);
+});
+
+test("only attempted is token_expired (other skipped) → 502", () => {
+  assert.equal(decideSyncStatus([meta("skipped"), google("token_expired")]), 502);
+});

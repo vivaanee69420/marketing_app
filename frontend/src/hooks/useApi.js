@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, adminApi } from '../lib/api.js';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, adminApi, streamSync } from '../lib/api.js';
 
 // ── Queries ───────────────────────────────────────────────────────────────
 export function useBusinesses() {
@@ -110,4 +111,99 @@ export function useSync() {
       qc.invalidateQueries({ queryKey: ['integrations'] });
     },
   });
+}
+
+/**
+ * SSE-driven sync hook. Exposes phase + percent + final result for a modal
+ * progress UI. start({business_id, provider}) opens the stream and resolves
+ * when the backend sends the `result` event.
+ *
+ * Percent mapping is intentionally coarse — backend reports honest phases,
+ * not a true percentage, so the bar maps phases to bands and within the
+ * `writing` phase scales linearly on done/total.
+ *
+ *   start (0) → fetching (10) → fetched (40)
+ *   → writing (40..90 scaled) → finalizing (95) → done (100)
+ */
+export function useStreamSync() {
+  const qc = useQueryClient();
+  const [state, setState] = useState({
+    isRunning: false,
+    isDone: false,
+    isError: false,
+    phase: null,
+    provider: null,
+    percent: 0,
+    done: 0,
+    total: 0,
+    result: null,
+    error: null,
+  });
+  // Guard against unmount-after-resolve setState warnings.
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const percentFor = (ev) => {
+    if (!ev) return 0;
+    switch (ev.phase) {
+      case 'start': return 2;
+      case 'fetching': return 10;
+      case 'fetched': return 40;
+      case 'writing': {
+        if (!ev.total) return 40;
+        return 40 + Math.floor(50 * (ev.done / ev.total));
+      }
+      case 'finalizing': return 95;
+      case 'done': return 100;
+      default: return 0;
+    }
+  };
+
+  const start = useCallback(async (payload) => {
+    setState({
+      isRunning: true, isDone: false, isError: false,
+      phase: 'start', provider: payload.provider || null,
+      percent: 2, done: 0, total: 0, result: null, error: null,
+    });
+    try {
+      const result = await streamSync(payload, ({ type, data }) => {
+        if (!alive.current) return;
+        if (type === 'progress') {
+          setState((s) => ({
+            ...s,
+            phase: data.phase,
+            provider: data.provider || s.provider,
+            done: data.done ?? s.done,
+            total: data.total ?? s.total,
+            percent: Math.max(s.percent, percentFor(data)),
+          }));
+        }
+      });
+      if (!alive.current) return result;
+      setState((s) => ({
+        ...s, isRunning: false, isDone: true,
+        percent: 100, phase: 'done', result,
+      }));
+      qc.invalidateQueries({ queryKey: ['metrics'] });
+      qc.invalidateQueries({ queryKey: ['integrations'] });
+      return result;
+    } catch (err) {
+      if (!alive.current) throw err;
+      setState((s) => ({
+        ...s, isRunning: false, isError: true,
+        error: err.message || 'sync failed',
+      }));
+      throw err;
+    }
+  }, [qc]);
+
+  const reset = useCallback(() => {
+    setState({
+      isRunning: false, isDone: false, isError: false,
+      phase: null, provider: null, percent: 0,
+      done: 0, total: 0, result: null, error: null,
+    });
+  }, []);
+
+  return { ...state, start, reset };
 }

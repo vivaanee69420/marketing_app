@@ -18,3 +18,4 @@ export { default as FilterSelect } from './FilterSelect.jsx';
 export { default as TrendChart } from './TrendChart.jsx';
 export { default as Icon } from './Icon.jsx';
 export { InputField, TextAreaField, SelectField } from './Field.jsx';
+export { default as SyncModal } from './SyncModal.jsx';
